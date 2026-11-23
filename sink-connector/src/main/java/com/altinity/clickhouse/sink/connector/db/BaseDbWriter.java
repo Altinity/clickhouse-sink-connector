@@ -6,7 +6,8 @@ import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateData
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.logging.log4j.LogManager;
@@ -183,30 +184,69 @@ public class BaseDbWriter {
      * Resolves the {@code custom_settings} JDBC property from the user's
      * {@code clickhouse.jdbc.settings} value.
      *
-     * <p>A user list is used verbatim, with {@code input_format_null_as_default=0}
-     * appended when the list does not mention that key: configuring other
-     * session settings must not silently re-enable DEFAULT substitution. A
-     * user who sets the key explicitly, to either value, is honoured -- the
+     * <p>The user's list is MERGED with {@link #DEFAULT_CUSTOM_SETTINGS}: every
+     * user entry is kept, in the user's order, and every default key the user
+     * did not mention is appended. A user entry therefore overrides the default
+     * for that one key only; configuring an unrelated session setting must not
+     * silently drop {@code insert_allow_materialized_columns=1} or
+     * {@code allow_experimental_object_type=1}, nor re-enable DEFAULT
+     * substitution by omitting {@code input_format_null_as_default=0}. A user
+     * who sets a default key explicitly, to either value, is honoured -- the
      * choice is then visible in the configuration rather than silent.</p>
+     *
+     * <p>Entries are split with {@code split("=", 2)} and trimmed, so a value
+     * may itself contain {@code =}; empty entries are skipped.</p>
      *
      * @param userJdbcSettings the configured {@code clickhouse.jdbc.settings},
      *                         may be null or empty
      * @return the comma-separated settings list to open connections with
      */
     static String customSettings(String userJdbcSettings) {
-        if (userJdbcSettings == null || userJdbcSettings.isEmpty()) {
+        if (userJdbcSettings == null || userJdbcSettings.trim().isEmpty()) {
             return DEFAULT_CUSTOM_SETTINGS;
         }
-        boolean mentionsNullAsDefault = Arrays.stream(userJdbcSettings.split(","))
-                .anyMatch(s -> s.trim().startsWith(NULL_AS_DEFAULT_SETTING));
-        if (mentionsNullAsDefault) {
-            return userJdbcSettings;
+        Map<String, String> merged = parseSettingsList(userJdbcSettings);
+        if (!merged.containsKey(NULL_AS_DEFAULT_SETTING)) {
+            log.info("{} does not set {}; appending {}=0 so a source NULL bound for a "
+                            + "non-Nullable column is rejected rather than replaced by the column DEFAULT",
+                    ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS, NULL_AS_DEFAULT_SETTING,
+                    NULL_AS_DEFAULT_SETTING);
         }
-        log.info("{} does not set {}; appending {}=0 so a source NULL bound for a "
-                        + "non-Nullable column is rejected rather than replaced by the column DEFAULT",
-                ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS, NULL_AS_DEFAULT_SETTING,
-                NULL_AS_DEFAULT_SETTING);
-        return userJdbcSettings + "," + NULL_AS_DEFAULT_SETTING + "=0";
+        parseSettingsList(DEFAULT_CUSTOM_SETTINGS).forEach(merged::putIfAbsent);
+        StringBuilder out = new StringBuilder();
+        merged.forEach((key, value) -> {
+            if (out.length() > 0) {
+                out.append(',');
+            }
+            out.append(key);
+            if (value != null) {
+                out.append('=').append(value);
+            }
+        });
+        return out.toString();
+    }
+
+    /**
+     * Parses a {@code key=value,key=value} list into an insertion-ordered map.
+     * Keys and values are trimmed, the value is everything after the FIRST
+     * {@code =}, an entry without {@code =} maps to a null value, and empty
+     * entries are skipped. A repeated key keeps its last value.
+     */
+    private static Map<String, String> parseSettingsList(String list) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String entry : list.split(",")) {
+            String trimmed = entry.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String[] keyValue = trimmed.split("=", 2);
+            String key = keyValue[0].trim();
+            if (key.isEmpty()) {
+                continue;
+            }
+            result.put(key, keyValue.length > 1 ? keyValue[1].trim() : null);
+        }
+        return result;
     }
 
     /**
@@ -214,17 +254,34 @@ public class BaseDbWriter {
      * The input string should be in the format:
      * "key1=value1,key2=value2,..."
      *
-     * @param jdbcProperties the JDBC properties string
+     * <p>Each entry is split on the FIRST {@code =} only, so a value may
+     * contain {@code =} (base64 padding, custom settings such as
+     * {@code a=b}); key and value are trimmed; empty entries (for example a
+     * trailing comma) are skipped.</p>
+     *
+     * @param jdbcProperties the JDBC properties string; null yields no properties
      * @return a Properties object populated with the key-value pairs from
      *         the input string
+     * @throws IllegalArgumentException when a non-empty entry has no
+     *         {@code =} or an empty key
      */
     public static Properties splitJdbcProperties(String jdbcProperties) {
-        String[] splitProperties = jdbcProperties.split(",");
         Properties properties = new Properties();
-        Arrays.stream(splitProperties).forEach(property -> {
-            String[] keyValue = property.split("=");
-            properties.setProperty(keyValue[0], keyValue[1]);
-        });
+        if (jdbcProperties == null) {
+            return properties;
+        }
+        for (String property : jdbcProperties.split(",")) {
+            if (property.trim().isEmpty()) {
+                continue;
+            }
+            String[] keyValue = property.split("=", 2);
+            String key = keyValue[0].trim();
+            if (keyValue.length < 2 || key.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Malformed JDBC property entry (expected key=value): '" + key + "'");
+            }
+            properties.setProperty(key, keyValue[1].trim());
+        }
         return properties;
     }
 
@@ -320,7 +377,11 @@ public class BaseDbWriter {
                 this.conn = HikariDbSource.initiateNewConnectionIfClosed(
                         this.database, this.jdbcUrl());
             } catch (Exception e) {
-                log.error("Error retrieving new connection in getConnection");
+                // Callers re-fetch through this method and tolerate a stale or null handle
+                // (they fail on first use), so the contract stays "return this.conn"; the
+                // cause and target are logged so the failure is attributable.
+                log.error("Error retrieving new connection in getConnection for database '{}' (url {}): {}",
+                        this.database, this.jdbcUrl(), e.toString(), e);
             }
         }
         return this.conn;

@@ -142,6 +142,14 @@ lines equals `findings`. The counters are process-wide.
   known and none is added to the ignored list. The connector does not edit the role templates; the drift is reported
   in section 7.
 
+### 3.4a Connector classes that are not on the classpath
+
+The known-key scan reads the field names of each Debezium source connector class. `MongoDbConnectorConfig` ships in a
+separate artifact that a MySQL or PostgreSQL deployment does not carry. `ConfigKeyCheck.logSourceUnavailable` therefore
+logs a `ClassNotFoundException` or `NoClassDefFoundError` for a class listed in `OPTIONAL_CONNECTOR_SOURCES` at DEBUG,
+because the absence is expected. Any other failure, and any failure of a core source class, stays a WARN, so a real
+classpath fault is not hidden.
+
 ### 3.5 Lint scope
 
 The shipped-default test renders the defaults and the templates listed in section 2 and checks that none of them
@@ -175,6 +183,9 @@ finding count.
   `ConfigKeyCheckTest.columnTypeOverrideAliasAndDirectKeysAreKnown`, `ConfigKeyCheckTest.renamedKeysAreNotDebeziumFieldNames`,
   `ConfigKeyCheckTest.strictRefusesEveryUnknownKeyNotOnlyRenamed`, `ConfigKeyCheckTest.latin1TextRegistrationKeysAreKnown`
   (every key the registration sets is known; a misspelt `latin1text.typ` or `latin1text.types` is not).
+- Optional connector sources: `ConfigKeyCheckTest.missingOptionalConnectorIsDebugNotWarn`,
+  `ConfigKeyCheckTest.missingOptionalConnectorDependencyIsDebugNotWarn`, `ConfigKeyCheckTest.realFailuresStayWarnings` and
+  `ConfigKeyCheckTest.knownKeysLogNoMongoWarning`.
 - Source scan: `ConfigKeyCheckTest.everyKeyReadByTheModuleIsKnown` (every literal, string constant, `Q.NAME.name()` and
   `ClickHouseSinkConnectorConfigVariables` read resolves to a known key), `ConfigKeyCheckTest.reviewedDynamicReadsAreStillPresent`
   (the reviewed `DYNAMIC_READS` table: `offset.storage.jdbc.url`, `schema.history.internal.jdbc.url`,
@@ -258,8 +269,10 @@ finding count.
   `sink-connector-lightweight/src/test/resources/config_postgres.yml`, and the postgres branch of
   `sink-connector-lightweight/helm/sink-connector-lightweight/templates/configmap.yaml`. The in-repo deploy template
   `deploy/ansible-systemd/templates/config.yml.j2` refuses under strict for the same reason (`database.server.name` only).
-- The samples `sink-connector-lightweight/docker/config.yml`, `sink-connector-lightweight/docker/config-2.yml`,
-  `sink-connector-lightweight/k8s/config.yml` and `sink-connector-lightweight/src/main/resources/config.properties` set both
+- The samples `sink-connector-lightweight/docker/config.yml` and `sink-connector-lightweight/k8s/config.yml` no longer carry
+  the legacy `database.server.name` key: they set `topic.prefix` only, so they produce no RENAMED finding. The mysql branch
+  of `sink-connector-lightweight/helm/sink-connector-lightweight/templates/configmap.yaml` follows the same rule.
+- The samples `sink-connector-lightweight/docker/config-2.yml` and `sink-connector-lightweight/src/main/resources/config.properties` set both
   `database.server.name` and `topic.prefix`. The legacy key is RENAMED_IGNORED, so these never refuse (the pinned
   expectations in `src/test/resources/config-key-check/shipped-keys.tsv` list no other finding for them). The same legacy
   key is RENAMED_IGNORED in `sink-connector-lightweight/k8s/clickhouse-sink-connector-lt-cm1-configmap.yaml`,

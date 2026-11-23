@@ -1793,11 +1793,73 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    /**
+     * Applies one source DDL and records its outcome in the DDL metrics: the
+     * elapsed time of the whole application (parse, execution, retries,
+     * acknowledgement) is counted under {@code fail=false} when it completed
+     * and under {@code fail=true} when it threw. A DDL that was ignored (by
+     * rule, filter or {@code disable.drop.truncate}) was never applied and is
+     * not counted.
+     */
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr,
                                      ClickHouseSinkConnectorConfig config,
                                      DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
                                      ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
                                      boolean lastRecordInBatch, ClickHouseStruct chStruct) {
+        final long ddlStartTimeMs = System.currentTimeMillis();
+        boolean applied = false;
+        try {
+            applied = applyDDL(DDL, props, sr, config, recordCommitter, cdcRecord, lastRecordInBatch, chStruct);
+        } catch (RuntimeException | Error failure) {
+            recordDdlMetrics(DDL, ddlStartTimeMs, false);
+            throw failure;
+        }
+        if (applied) {
+            recordDdlMetrics(DDL, ddlStartTimeMs, true);
+        }
+    }
+
+    /**
+     * Records one applied DDL in {@link Metrics}. {@code failed} is the
+     * negation of success: the counter used to receive the success flag as its
+     * {@code failed} argument, tagging every successful DDL {@code fail="true"},
+     * and was incremented by a duration measured after the work was done.
+     *
+     * @param ddl         the source statement
+     * @param startTimeMs {@code System.currentTimeMillis()} taken BEFORE the statement was applied
+     * @param succeeded   whether the statement was applied
+     */
+    static void recordDdlMetrics(String ddl, long startTimeMs, boolean succeeded) {
+        long elapsedMs = Math.max(0L, System.currentTimeMillis() - startTimeMs);
+        Metrics.updateDdlMetrics(ddl, startTimeMs, elapsedMs, !succeeded);
+    }
+
+    /**
+     * The error table the DDL path records failures in: the connector's
+     * {@code default.error.table}, read through the config so its default
+     * applies, never straight from the properties (which is null when the key
+     * is not set, so the failure was written to a table that does not exist).
+     */
+    static String resolveErrorTableName(ClickHouseSinkConnectorConfig config) {
+        String configured = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        if (configured == null || configured.trim().isEmpty() || configured.equalsIgnoreCase("null")) {
+            return DEFAULT_ERROR_TABLE_NAME;
+        }
+        return configured;
+    }
+
+    /** The table the error path falls back to when none is configured. */
+    static final String DEFAULT_ERROR_TABLE_NAME = "replica_source_error";
+
+    /**
+     * @return true when the DDL was applied and acknowledged; false when it
+     *         was ignored (nothing was applied)
+     */
+    private boolean applyDDL(String DDL, Properties props, SourceRecord sr,
+                             ClickHouseSinkConnectorConfig config,
+                             DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
+                             ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
+                             boolean lastRecordInBatch, ClickHouseStruct chStruct) {
         String databaseName = getDatabaseName(sr);
         // Get source timezone from config
         String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
@@ -1816,7 +1878,17 @@ public class DebeziumChangeEventCapture {
 
         if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-            return;
+            return false;
+        }
+
+        // A multi-table RENAME TABLE a TO b, c TO d is translated for the captured pairs only: forwarding
+        // an excluded pair would rename a table the connector does not replicate.
+        final String translatedDDL = retainCapturedRenamePairs(DDL, sr, props);
+        if (translatedDDL == null) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL: no pair of the RENAME TABLE is inside the database/table include/exclude "
+                    + "lists. DDL: {}", DDL);
+            return false;
         }
 
         DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
@@ -1831,7 +1903,7 @@ public class DebeziumChangeEventCapture {
         // The lists name SOURCE tables, so the filter is matched against the
         // source database, not the destination one above.
         ddlParserService.setColumnFilter(DdlColumnFilter.from(props), sourceDatabaseName(sr));
-        ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+        ddlParserService.parseSql(translatedDDL, "", clickHouseQuery, isDropOrTruncate);
 
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
         // disable.drop.truncate is decided AFTER the parse, on the statement
@@ -1865,18 +1937,31 @@ public class DebeziumChangeEventCapture {
             // backfill of the table: the operator keeps the rows already in
             // the table, not the retired pre-DDL ones (Spec 06.09 §3.3.2 step 7).
             cancelPrimaryKeyBackfillsSupersededBy(DDL, sr, props, config, databaseName, clickHouseQuery.toString());
-            return;
+            return false;
         }
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-        // Use the configured MAX_RETRIES value for DDL operations
-        int MAX_DDL_RETRIES = MAX_RETRIES;
+        // Use the configured MAX_RETRIES value for DDL operations. It is the number of ATTEMPTS, and at
+        // least one: errors.max.retries=0 means "do not retry", not "do not run the DDL" -- a zero here
+        // skipped the loop, executed nothing, acknowledged nothing and reported success.
+        int MAX_DDL_RETRIES = Math.max(1, MAX_RETRIES);
         int ddlAttempts = 0;
+
+        // Which steps of this DDL have already completed. A retry repeats only what has not: re-running
+        // a statement that succeeded (because a LATER step or visibility poll failed) is not idempotent
+        // for every DDL, and a repeated bulk close, key swap or audit row would be a duplicate.
+        boolean ddlBackfillsCancelled = false;
+        DdlExecutionProgress ddlProgress = new DdlExecutionProgress();
+        boolean ddlExecuted = false;
+        boolean historyBulkClosesApplied = false;
+        boolean primaryKeyRebuilt = false;
+        PrimaryKeyBackfill.Task pendingBackfillTask = null;
+        boolean auditRowWritten = false;
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
-        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        String errorTableName = resolveErrorTableName(config);
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -1890,17 +1975,22 @@ public class DebeziumChangeEventCapture {
             try {
 
                 if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString())) {
-                    // DESTRUCTIVE: statement text is only classified here; the drop of the retired copy it triggers is bounded to rebuild scratch tables.
-                    if (isDropOrTruncate.get()) {
-                        // A DROP TABLE / TRUNCATE TABLE / DROP DATABASE makes the
-                        // pre-DDL rows of the table obsolete: cancel its pending
-                        // primary-key backfill and drop the retired copy BEFORE
-                        // the statement runs, so no later copy statement can
-                        // resurrect the removed rows (Spec 06.09 §3.3.2 step 7).
-                        cancelPrimaryKeyBackfillsSupersededBy(DDL, sr, props, config, databaseName,
-                                clickHouseQuery.toString());
+                    if (!ddlExecuted) {
+                        // DESTRUCTIVE: statement text is only classified here; the drop of the retired copy it triggers is bounded to rebuild scratch tables.
+                        if (!ddlBackfillsCancelled && isDropOrTruncate.get()) {
+                            // A DROP TABLE / TRUNCATE TABLE / DROP DATABASE makes the
+                            // pre-DDL rows of the table obsolete: cancel its pending
+                            // primary-key backfill and drop the retired copy BEFORE
+                            // the statement runs, so no later copy statement can
+                            // resurrect the removed rows (Spec 06.09 §3.3.2 step 7).
+                            cancelPrimaryKeyBackfillsSupersededBy(DDL, sr, props, config, databaseName,
+                                    clickHouseQuery.toString());
+                            ddlBackfillsCancelled = true;
+                        }
+                        executeDDL(clickHouseQuery.toString(), writer, config, databaseName, ddlProgress);
+                        // From here a failure of a LATER step must not re-run the statement.
+                        ddlExecuted = true;
                     }
-                    executeDDL(clickHouseQuery.toString(), writer, config);
 
                     // History mode (Spec 12.03 section 3.4): a source TRUNCATE
                     // TABLE / DROP-TABLE is translated to NO DDL text (so the
@@ -1918,7 +2008,7 @@ public class DebeziumChangeEventCapture {
                     List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses =
                             ddlParserService.historyBulkCloses();
                     if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())
-                            && !historyBulkCloses.isEmpty()) {
+                            && !historyBulkCloses.isEmpty() && !historyBulkClosesApplied) {
                         if (isSnapshotDDL(sr)) {
                             // Debezium's schema snapshot replays `DROP-TABLE IF EXISTS`
                             // before every `CREATE TABLE`. That is a bootstrap
@@ -1933,6 +2023,7 @@ public class DebeziumChangeEventCapture {
                         } else {
                             executeHistoryBulkCloses(historyBulkCloses, chStruct, config, serverTimeZone.get(), DDL);
                         }
+                        historyBulkClosesApplied = true;
                     }
 
                     // The statement changed the source table's row identity:
@@ -1944,10 +2035,16 @@ public class DebeziumChangeEventCapture {
                     // swap failure is a DDLReplicationException and escapes
                     // this loop unretried.
                     PrimaryKeyRebuildPlan plan = ddlParserService.primaryKeyRebuildPlan();
-                    if (plan != null) {
-                        PrimaryKeyBackfill.Task task = PrimaryKeyRebuild.swap(plan, writer.getConnection(), props,
+                    if (plan != null && !primaryKeyRebuilt) {
+                        pendingBackfillTask = PrimaryKeyRebuild.swap(plan, writer.getConnection(), props,
                                 config, sourceDatabaseName(sr), System.currentTimeMillis());
-                        primaryKeyBackfill(props, config).submit(task);
+                        primaryKeyRebuilt = true;
+                    }
+                    if (pendingBackfillTask != null) {
+                        // Submitted exactly once, and retried alone if the submission itself fails:
+                        // the swap above is done and must not be repeated.
+                        primaryKeyBackfill(props, config).submit(pendingBackfillTask);
+                        pendingBackfillTask = null;
                     }
                 }
 
@@ -2076,7 +2173,8 @@ public class DebeziumChangeEventCapture {
                 // audit row missing (Gap G-12.04-1, Invariant I9) -- in
                 // replication-log-only mode the audit table is the only
                 // output, so that was a silent loss.
-                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())
+                        && !auditRowWritten) {
                     String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
                     String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
                     BinLogHistory binLogHistory = new BinLogHistory();
@@ -2085,6 +2183,7 @@ public class DebeziumChangeEventCapture {
                     currentBatch.add(chStruct);
                     binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL,
                             currentBatch, sourceTimeZone, serverTimeZone.get());
+                    auditRowWritten = true;
                 }
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
@@ -2152,7 +2251,7 @@ public class DebeziumChangeEventCapture {
                         "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", lastFailure);
             }
         }
-        updateMetrics(DDL);
+        return true;
     }
 
     /**
@@ -2419,34 +2518,101 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Tracks per-statement execution and schema-visibility progress across {@code ddl.retry}
+     * attempts so a visibility timeout or a failure on a later statement never re-executes a
+     * statement ClickHouse has already applied.
+     */
+    static final class DdlExecutionProgress {
+        int executedStatements;
+        int visibleStatements;
+    }
+
+    /**
      * Executes the given DDL query by splitting it into individual queries
      * and executing each one.
      *
      * @param clickHouseQuery The DDL query string.
      * @param writer          The {@link BaseDbWriter} used to execute the query.
+     * @param defaultDatabase The database an unqualified {@code ALTER TABLE tbl} refers to.
+     * @param progress        Per-statement execution and visibility cursor shared across retries.
      * @throws SQLException If a database access error occurs.
+     * @throws DDLSchemaChangeWaiter.SchemaVisibilityTimeoutException when an executed ALTER's column
+     *         change does not become visible in time: the DDL is failed rather than letting rows be
+     *         written against a stale schema.
      */
-    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
-        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config,
+                            String defaultDatabase, DdlExecutionProgress progress) throws SQLException {
         DBMetadata dbMetadata = new DBMetadata(config);
         long schemaChangeTimeoutMs = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString());
         long schemaChangePollIntervalMs = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString());
         DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter(schemaChangeTimeoutMs, schemaChangePollIntervalMs);
-        String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
-        for (String query : queries) {
-            if (!query.isEmpty()) {
+        List<String> statements = splitStatements(clickHouseQuery.replaceAll(",$", ""));
+        for (int i = progress.visibleStatements; i < statements.size(); i++) {
+            String query = statements.get(i);
+            if (i >= progress.executedStatements) {
                 log.info("ClickHouse DDL: " + query);
                 dbMetadata.executeSystemQuery(writer.getConnection(), query);
-                // Wait for schema change to become visible in system.columns
-                // before cache invalidation proceeds. Without this, the batch
-                // insert thread may rebuild its column metadata cache before
-                // the ALTER TABLE has propagated, silently dropping values
-                // for newly added columns. See GitHub issue #1222.
-                schemaWaiter.waitForSchemaVisibility(writer.getConnection(), query);
+                progress.executedStatements = i + 1;
+            } else {
+                log.info("ClickHouse DDL already executed; re-checking schema visibility: " + query);
+            }
+            // Wait for schema change to become visible in system.columns
+            // before cache invalidation proceeds. Without this, the batch
+            // insert thread may rebuild its column metadata cache before
+            // the ALTER TABLE has propagated, silently dropping values
+            // for newly added columns. See GitHub issue #1222. A change that
+            // never becomes visible throws: carrying on would write rows
+            // against the stale schema.
+            schemaWaiter.awaitSchemaVisibility(writer.getConnection(), query, defaultDatabase);
+            progress.visibleStatements = i + 1;
+        }
+    }
+
+    /**
+     * Splits translated DDL into the statements to execute one by one. The
+     * translator separates statements with a newline (an ALTER body and the
+     * RENAME TABLE that follows it); a newline INSIDE a quoted string or a
+     * quoted identifier -- a multi-line {@code COMMENT '...'}, a default value
+     * -- is part of its statement and is kept. Quotes are single, double or
+     * backtick; a backslash escapes the next character inside a quote, and a
+     * doubled quote character is two quotes (it toggles twice).
+     *
+     * @param ddl the translated statements; may be empty
+     * @return the non-blank statements, in order
+     */
+    static List<String> splitStatements(String ddl) {
+        List<String> statements = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        for (int i = 0; i < ddl.length(); i++) {
+            char c = ddl.charAt(i);
+            if (quote != 0) {
+                current.append(c);
+                if (c == '\\' && i + 1 < ddl.length()) {
+                    current.append(ddl.charAt(++i));
+                } else if (c == quote) {
+                    quote = 0;
+                }
+            } else if (c == '\'' || c == '"' || c == '`') {
+                quote = c;
+                current.append(c);
+            } else if (c == '\n') {
+                addStatement(statements, current);
+            } else {
+                current.append(c);
             }
         }
+        addStatement(statements, current);
+        return statements;
+    }
+
+    private static void addStatement(List<String> statements, StringBuilder current) {
+        if (current.toString().trim().length() > 0) {
+            statements.add(current.toString());
+        }
+        current.setLength(0);
     }
 
     /**
@@ -2547,20 +2713,6 @@ public class DebeziumChangeEventCapture {
         return TimeZoneResolver.clickHouseZone(configuredServerTimeZone);
     }
 
-
-    /**
-     * Updates the DDL metrics using the Metrics class.
-     *
-     * @param DDL The DDL statement that was executed.
-     */
-    private void updateMetrics(String DDL) {
-        long currentTime = System.currentTimeMillis();
-        boolean ddlProcessingResult = true;
-        Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
-
-        long elapsedTime = System.currentTimeMillis() - currentTime;
-        Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
-    }
 
     /**
      * Handles one batch of change events delivered by the Debezium engine.
@@ -3385,19 +3537,40 @@ public class DebeziumChangeEventCapture {
      * @return true if the record is a snapshot DDL; false otherwise.
      */
     private boolean isSnapshotDDL(SourceRecord sr) {
-        boolean snapshotDDL = false;
+        return sr != null && isSnapshotOffsetValue(
+                sr.sourceOffset() == null ? null : sr.sourceOffset().get("snapshot"));
+    }
 
-        if (sr.sourceOffset() != null) {
-            if (sr.sourceOffset().containsKey("snapshot")) {
-                String snapshotMode = (String) sr.sourceOffset().get("snapshot");
-                if (snapshotMode.equalsIgnoreCase("INITIAL")) {
-                    snapshotDDL = true;
-                }
-                // snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
-            }
+    /**
+     * Classifies the {@code snapshot} entry of a source offset. Debezium stores
+     * it as a {@link Boolean} in some paths and as the snapshot-state name in
+     * others; a blind {@code (String)} cast threw {@link ClassCastException}
+     * for the Boolean form, which the record loop swallowed -- dropping the
+     * DDL as if it were a control record.
+     *
+     * @param snapshot the raw offset value: {@code Boolean}, a state name
+     *                 ({@code TRUE}, {@code INITIAL}, {@code LAST},
+     *                 {@code BLOCKING}, {@code INITIAL_ONLY}; any case), or null
+     * @return true for a snapshot-phase value; false for null, {@code false},
+     *         {@code FALSE}, or any other value
+     */
+    static boolean isSnapshotOffsetValue(Object snapshot) {
+        if (snapshot == null) {
+            return false;
         }
-
-        return snapshotDDL;
+        if (snapshot instanceof Boolean) {
+            return (Boolean) snapshot;
+        }
+        switch (snapshot.toString().trim().toUpperCase(java.util.Locale.ROOT)) {
+            case "TRUE":
+            case "INITIAL":
+            case "LAST":
+            case "BLOCKING":
+            case "INITIAL_ONLY":
+                return true;
+            default:
+                return false;
+        }
     }
 
     // DESTRUCTIVE: javadoc of a partition DROP or TRUNCATE that stays ignored; this code executes no SQL.
@@ -3418,12 +3591,7 @@ public class DebeziumChangeEventCapture {
         if (!m.find()) {
             return false;
         }
-        String sourceDb = sourceDatabaseName(sr);
-        List<String> tables = DdlTableNames.affected(sr, DDL);
-        boolean captured = tables.isEmpty()
-                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
-                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
-        if (!captured) {
+        if (!anyAffectedTableCaptured(sr, DDL, props)) {
             return false;
         }
         log.warn("Ignoring {} PARTITION {} of table {}: the rows the source removed stay in ClickHouse (a deliberate, "
@@ -3431,11 +3599,84 @@ public class DebeziumChangeEventCapture {
         return true;
     }
 
+    /**
+     * Compiled ignore-rule regexes, by their source text: a rule is compiled once, not once per DDL
+     * event. A rule that does not compile throws and is never cached.
+     */
+    private static final java.util.concurrent.ConcurrentMap<String, Pattern> COMPILED_IGNORE_RULES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    static Pattern compiledIgnoreRule(String regex) {
+        return COMPILED_IGNORE_RULES.computeIfAbsent(regex, IgnoreDdlRegexPreflight::compile);
+    }
+
+    /** Whether the connector's source is MySQL, whose two-part table names are {@code database.table}. */
+    static boolean isMySqlSource(Properties props) {
+        String connectorClass = props == null ? null : props.getProperty("connector.class");
+        return connectorClass != null && connectorClass.toLowerCase(java.util.Locale.ROOT).contains("mysql");
+    }
+
+    /**
+     * Whether any table the DDL affects is inside the capture lists. Each table is matched in ITS database --
+     * the qualifier of its {@code tableChanges} id or of its rename side -- and only a table with no qualifier
+     * is matched in the record's own database: stripping every qualifier judged
+     * {@code table.include.list=db2\.t} entries against the wrong database.
+     */
+    private boolean anyAffectedTableCaptured(SourceRecord sr, String ddl, Properties props) {
+        String sourceDb = sourceDatabaseName(sr);
+        List<DdlTableNames.QualifiedName> tables = DdlTableNames.affectedQualified(sr, ddl, isMySqlSource(props));
+        return tables.isEmpty()
+                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
+                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(t.databaseOr(sourceDb), t.table, props));
+    }
+
+    /**
+     * Narrows a multi-table {@code RENAME TABLE a TO b, c TO d} to the pairs inside the capture lists. A pair is
+     * kept when either side is captured (the table is renamed into or out of the replicated set); a pair with
+     * neither side captured is dropped, so an excluded table is never renamed in ClickHouse.
+     *
+     * @return the statement to translate: {@code ddl} itself when it is not a multi-pair RENAME TABLE (or cannot
+     *         be parsed as one) or every pair is captured; the statement of the kept pairs otherwise; null when
+     *         no pair is captured
+     */
+    String retainCapturedRenamePairs(String ddl, SourceRecord sr, Properties props) {
+        List<DdlTableNames.RenamePair> pairs = DdlTableNames.renamePairs(ddl);
+        if (pairs == null || pairs.size() < 2) {
+            return ddl;
+        }
+        String sourceDb = sourceDatabaseName(sr);
+        boolean keepQualifiers = isMySqlSource(props);
+        List<String> kept = new ArrayList<>();
+        for (DdlTableNames.RenamePair pair : pairs) {
+            String pairSourceDb = keepQualifiers ? pair.source.databaseOr(sourceDb) : sourceDb;
+            boolean sourceCaptured = DdlCaptureFilter.isCaptured(pairSourceDb, pair.source.table, props);
+            boolean captured = sourceCaptured
+                    || (isRenameSideCaptured(pair.target, sourceDb, keepQualifiers, props)
+                    && DdlCaptureFilter.isRenameTargetPulledIntoInclude(pairSourceDb, props));
+            if (captured) {
+                kept.add(pair.text);
+            } else {
+                log.info("RENAME TABLE pair [{}] is outside the database/table include/exclude lists; it is not "
+                        + "applied.", pair.text);
+            }
+        }
+        if (kept.size() == pairs.size()) {
+            return ddl;
+        }
+        return kept.isEmpty() ? null : "RENAME TABLE " + String.join(", ", kept);
+    }
+
+    private static boolean isRenameSideCaptured(DdlTableNames.QualifiedName side, String sourceDb,
+                                                boolean keepQualifiers, Properties props) {
+        String database = keepQualifiers ? side.databaseOr(sourceDb) : sourceDb;
+        return DdlCaptureFilter.isCaptured(database, side.table, props);
+    }
+
     public boolean checkDDLAgainstRegexPatterns(String DDL) {
         IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
         List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
         for (String regex : ignoreDDLRegexList) {
-            Pattern p = Pattern.compile(regex);
+            Pattern p = compiledIgnoreRule(regex);
             Matcher m = p.matcher(DDL);
             if (m.find()) {
                 return true;
@@ -3468,7 +3709,7 @@ public class DebeziumChangeEventCapture {
         if (ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
             String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split(IgnoreDdlRegexPreflight.SEPARATOR_REGEX);
             for (String regex : separatedIgnoreDDLRegexList) {
-                Pattern p = IgnoreDdlRegexPreflight.compile(regex);
+                Pattern p = compiledIgnoreRule(regex);
                 Matcher m = p.matcher(DDL);
                 if (m.find()) {
                     lastIgnoredDDL = DDL;
@@ -3495,14 +3736,11 @@ public class DebeziumChangeEventCapture {
         // section 3.3). Debezium only pre-filters these when
         // store.only.captured.tables.ddl=true.
         String sourceDb = sourceDatabaseName(sr);
-        List<String> tables = DdlTableNames.affected(sr, DDL);
-        boolean anyCaptured = tables.isEmpty()
-                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
-                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
-        if (!anyCaptured) {
+        if (!anyAffectedTableCaptured(sr, DDL, props)) {
             lastIgnoredDDL = DDL;
             log.info("Ignoring DDL for {}.{}: outside database/table include/exclude lists, so the "
-                    + "table is not replicated. DDL: {}", sourceDb, tables, DDL);
+                    + "table is not replicated. DDL: {}", sourceDb,
+                    DdlTableNames.affectedQualified(sr, DDL, isMySqlSource(props)), DDL);
             return true;
         }
 
@@ -3944,8 +4182,7 @@ public class DebeziumChangeEventCapture {
             java.util.function.Supplier<Connection> connections = () -> BaseDbWriter.createConnection(
                     jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, dbCredentials.getUserName(),
                     dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
-            final String errorTableName = props.getProperty(
-                    ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+            final String errorTableName = resolveErrorTableName(config);
             final String connectorName = props.getProperty("name");
             PrimaryKeyBackfill.FailureReporter reporter = (ch, task, step, statement, cause) -> {
                 if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())) {

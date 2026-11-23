@@ -17,6 +17,9 @@ import re
 import os
 import json
 import concurrent.futures
+from ch_sink_tools.db_compare._sql_text import (
+    clickhouse_identifier, clickhouse_literal, clickhouse_table_reference, substitute_partition_expression,
+)
 from ch_sink_tools.db.clickhouse import (
     clickhouse_connection,
     execute_sql,
@@ -91,9 +94,9 @@ def get_primary_key_columns(conn, table_schema, table_name):
     SELECT
     name
     FROM system.columns
-    WHERE (database = '{table_schema}') AND (table = '{table_name}') AND (is_in_primary_key = 1)
+    WHERE (database = {table_schema}) AND (table = {table_name}) AND (is_in_primary_key = 1)
     ORDER BY position ASC
-""".format(table_schema=table_schema, table_name=table_name)
+""".format(table_schema=clickhouse_literal(table_schema), table_name=clickhouse_literal(table_name))
     (rowset, count) = execute_sql(conn, sql)
     res = []
     for row in rowset:
@@ -114,9 +117,76 @@ SINK_METADATA_COLUMNS = frozenset(
 warned_tables = set()
 
 
+_TYPE_WRAPPER = re.compile(r"(?:Nullable|LowCardinality)\((.*)\)\Z", re.DOTALL)
+
+
+def base_type(data_type):
+    """The ClickHouse type with its outer ``Nullable(...)`` / ``LowCardinality(...)``
+    wrappers removed: ``LowCardinality(Nullable(String))`` gives ``String``.
+
+    Classification must read this and never search the whole type string: an
+    Enum8('Float' = 1, 'JSON' = 2) carries user text (member labels) inside the
+    type, and ``'Float' in data_type`` would take that column for a Float
+    (spec 11.02 section 3.3)."""
+    text = (data_type or "").strip()
+    while True:
+        match = _TYPE_WRAPPER.match(text)
+        if not match:
+            return text
+        text = match.group(1).strip()
+
+
+def _type_name(data_type):
+    """The bare type keyword of ``base_type``: ``Decimal(10, 2)`` gives ``Decimal``."""
+    return base_type(data_type).split("(", 1)[0].strip()
+
+
+def is_enum_type(data_type):
+    """Enum8 / Enum16 (and their Nullable / LowCardinality forms): a string column."""
+    return _type_name(data_type) in ("Enum", "Enum8", "Enum16")
+
+
+def is_float_type(data_type):
+    """Float32, Float64, BFloat16."""
+    return _type_name(data_type) in ("Float32", "Float64", "BFloat16")
+
+
+def is_json_type(data_type):
+    """The native JSON type and the legacy Object('json') type."""
+    return _type_name(data_type) in ("JSON", "Object")
+
+
+def is_bool_type(data_type):
+    return _type_name(data_type) == "Bool"
+
+
+def is_decimal_type(data_type):
+    """Decimal(P, S) and Decimal32 / 64 / 128 / 256 (S)."""
+    return _type_name(data_type) in ("Decimal", "Decimal32", "Decimal64", "Decimal128", "Decimal256")
+
+
+def is_string_type(data_type):
+    """String and FixedString(N); not an Enum, whose labels are not the stored bytes."""
+    return _type_name(data_type) in ("String", "FixedString")
+
+
 def is_datetime_type(data_type):
     """DateTime, DateTime32, DateTime64 and their Nullable / time-zoned forms."""
-    return "DateTime" in data_type
+    return _type_name(data_type) in ("DateTime", "DateTime32", "DateTime64")
+
+
+def decimal_scale(data_type, numeric_scale):
+    """The scale of a Decimal column. ``system.columns.numeric_scale`` is NULL for
+    ``Nullable(Decimal(...))``; the scale is then read from the type text:
+    ``Decimal(P, S)`` or ``DecimalNN(S)``. A scale that can be found nowhere
+    raises: ``toDecimalString(col, None)`` is not a statement."""
+    if numeric_scale is not None:
+        return int(numeric_scale)
+    base = base_type(data_type)
+    match = re.match(r"Decimal\(\s*\d+\s*,\s*(\d+)\s*\)\Z", base) or re.match(r"Decimal(?:32|64|128|256)\(\s*(\d+)\s*\)\Z", base)
+    if not match:
+        raise ValueError(f"Cannot determine the scale of the Decimal column type {data_type!r}")
+    return int(match.group(1))
 
 
 def clickhouse_datetime_rendering(column_name, zone):
@@ -139,18 +209,26 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
     a String column that holds raw bytes (persist.raw.bytes=true, spec 11.02
     section 3.6): it is rendered as lowercase hex like the MySQL side.
     """
-    if 'Bool' in data_type:
+    # The type is classified by its base name, never by a substring search of the
+    # whole type text. An Enum is a string column whose member labels may be any
+    # text ('Float', 'JSON', 'Bool', ...), so it is decided first.
+    if is_enum_type(data_type):
+        return "toString(" + column_name + ")"
+    if is_bool_type(data_type):
         # Bool and Nullable(Bool); MySQL renders bit(1) / tinyint as 1 / 0,
         # toString(Bool) would give true / false.
         return "toString(toUInt8(" + column_name + "))"
-    if "Decimal" in data_type:
+    if is_decimal_type(data_type):
         # toString() drops trailing zeros; MySQL prints the declared scale. Both sides then drop the
         # trailing zeros, so the same value at a different declared scale compares equal (spec 11.02 section 3.3).
-        return clickhouse_decimal_text("toDecimalString(" + column_name + "," + str(numeric_scale) + ")")
+        return clickhouse_decimal_text("toDecimalString(" + column_name + "," + str(decimal_scale(data_type, numeric_scale)) + ")")
     if is_datetime_type(data_type):
         return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse',
                                          saturate_from)
-    if raw_bytes and 'String' in data_type:
+    if raw_bytes and is_string_type(data_type):
+        # Lower case hex, like the MySQL side's lower(hex(...)): HEX() is upper
+        # case in MySQL and hex() upper case in ClickHouse, so both are lowered
+        # (spec 11.02 section 3.6).
         return "lower(hex(" + column_name + "))"
     return "toString(" + column_name + ")"
 
@@ -204,7 +282,7 @@ def build_clickhouse_row_expression(columns_metadata, options):
     char_columns = parse_column_list(getattr(options, "char_columns", ""))
     skipped = {"floating point": [], "JSON": []}
     for row in columns_metadata:
-        column_name = '"' + row[0] + '"'
+        column_name = clickhouse_identifier(row[0])
         data_type = row[1]
         is_nullable = row[2]
         numeric_scale = row[3]
@@ -214,15 +292,15 @@ def build_clickhouse_row_expression(columns_metadata, options):
             (zone, bounds, floor) = ('UTC', utc_bounds, utc_floor)
         else:
             (zone, bounds, floor) = (source_zone, wall_clock_bounds, wall_clock_floor)
-        if not options.include_floating_point_columns and 'Float' in data_type:
+        if not options.include_floating_point_columns and is_float_type(data_type):
             skipped["floating point"].append(row[0])
             continue
-        if not options.include_json_columns and ('json' in data_type.lower() or row[0] in json_columns):
+        if not options.include_json_columns and (is_json_type(data_type) or row[0] in json_columns):
             skipped["JSON"].append(row[0])
             continue
         expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
                                                   raw_bytes=(row[0] in hex_columns), saturate_from=floor)
-        if row[0] in char_columns and 'String' in data_type and row[0] not in hex_columns:
+        if row[0] in char_columns and is_string_type(data_type) and row[0] not in hex_columns:
             expression = clickhouse_pad_space_text(expression)
         if is_datetime_type(data_type):
             clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1],
@@ -255,7 +333,7 @@ def sign_column_from_engine(engine_full):
 
 
 def get_engine_full(conn, database, table):
-    sql = f"select engine_full from system.tables where database = '{database}' and name = '{table}'"
+    sql = f"select engine_full from system.tables where database = {clickhouse_literal(database)} and name = {clickhouse_literal(table)}"
     (rowset, count) = execute_sql(conn, sql)
     return rowset[0][0] if rowset else ''
 
@@ -339,7 +417,11 @@ def get_table_checksum_query(conn, table):
     # MySQL side (spec 13.06 D-13.06-17).
     excluded_columns = parse_exclude_columns(args.exclude_columns)
     logging.info(f"Excluded columns, {excluded_columns}")
-    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale, is_in_partition_key, is_in_sorting_key from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
+    # Nullable is read from the start of the type text: match(type,'Nullable')
+    # also hit an Enum8('Nullable' = 1) (spec 11.02 section 3.3).
+    checksum_query=("select name, type, if(startsWith(type,'Nullable(') or startsWith(type,'LowCardinality(Nullable('),1,0) is_nullable, "
+                    "numeric_scale, is_in_partition_key, is_in_sorting_key from system.columns where database=" + clickhouse_literal(args.clickhouse_database)
+                    + " and table = " + clickhouse_literal(table) + " order by position")
     (rowset, rowcount) = execute_sql(conn, checksum_query)
 
     columns_metadata  = []
@@ -364,6 +446,11 @@ def get_table_checksum_query(conn, table):
 
     (select, nullables, columns, data_types, clamped_expression, skipped) = build_clickhouse_row_expression(filtered_columns_metadata, args)
     warn_not_compared(args.clickhouse_database, table, skipped, warned_tables)
+    if not select:
+        # Every column excluded or skipped by type: MD5() of nothing is not valid
+        # SQL, and a checksum of nothing must not be reported as a match.
+        raise ValueError(f"No comparable column in {args.clickhouse_database}.{table}: every column is excluded "
+                         "or skipped by type, or the table does not exist; no checksum computed")
     final_per_partition = partition_key_within_sorting_key(columns_metadata)
     partition_columns = [row[0] for row in columns_metadata if row[4] == 1]
     logging.info(f"FINAL per partition: {final_per_partition} (partition key columns {partition_columns}; "
@@ -379,14 +466,15 @@ def get_table_checksum_query(conn, table):
         order_by_columns = ','.join(columns)
 
     query = "select "+select+"||','  as query from " + \
-        args.clickhouse_database+"."+table
+        clickhouse_table_reference(args.clickhouse_database, table)
 
     if len(primary_key_columns) > 0:
         query += " order by " + order_by_columns
 
+    # Was built from data_types[<key column>], which raised KeyError for a key
+    # column that is excluded or absent from the source; nothing reads it, the
+    # empty string is kept for the callers' tuple shape.
     external_column_types = ""
-    for column in primary_key_columns:
-        external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
     return (query, select, order_by_columns, external_column_types, clamped_expression, final_per_partition)
@@ -400,16 +488,16 @@ def fstr(template, partition_expression):
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0", final_per_partition=False, sign_column=""):
     statements = []
-    external_table_name = args.clickhouse_database+"."+table
     limit = ""
     if args.debug_limit:
-        limit = " limit "+args.debug_limit
+        # int(): the value is interpolated into the statement.
+        limit = " limit " + str(int(args.debug_limit))
     where = "1=1"
     if _where:
        # the user text is one operand: parenthesised before the sign filter is
        # ANDed onto it (spec 11.02 section 3.11)
        where = f"({_where})" if sign_column else _where
-    schema=args.clickhouse_database
+    source_table = clickhouse_table_reference(args.clickhouse_database, table)
     # skip deleted rows of a Collapsing engine; a ReplacingMergeTree with
     # is_deleted needs no filter, FINAL drops them (spec 11.02 section 3.8)
     if sign_column:
@@ -427,12 +515,15 @@ def select_table_statements(table, query, select_query, order_by, external_colum
         settings.append(f"max_memory_usage = {max_memory_usage}")
     settings_clause = (" settings " + ", ".join(settings)) if settings else ""
 
+    # Each word is 0 .. 2^32-1. The sum is taken as UInt128, so it is exact
+    # whatever the row count: sum() of an Int64 / UInt64 wraps silently (at about
+    # 2.1 billion rows for Int64), and the MySQL side sums into DECIMAL(65,0).
     sql = f"""select
       count(*) as "cnt",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 9, 8))))),0) as "b",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 17, 8))))),0) as "c",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) as "d",
+      coalesce(sum(toUInt128(reinterpretAsUInt64(reverse(unhex(substring(hash, 1, 8)))))),0) as "a",
+      coalesce(sum(toUInt128(reinterpretAsUInt64(reverse(unhex(substring(hash, 9, 8)))))),0) as "b",
+      coalesce(sum(toUInt128(reinterpretAsUInt64(reverse(unhex(substring(hash, 17, 8)))))),0) as "c",
+      coalesce(sum(toUInt128(reinterpretAsUInt64(reverse(unhex(substring(hash, 25, 8)))))),0) as "d",
       coalesce(sum(clamped),0) as "clamped"
     from (
      select hex(MD5(
@@ -442,14 +533,14 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       )) as "hash",
       {clamped_expression} as clamped
 
-      from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
+      from {source_table} final where {where} /*order by {order_by}*/ {limit}
 
 	  ) as t{settings_clause}"""
     statements.append(sql)
     if args.debug_output:
         # The per-row strings, written to out.<table>.ch.txt by
         # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
-        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit}{settings_clause}""")
+        statements.append(f"""select  {select_query}  as "hash"   from {source_table} final where  {where} {limit}{settings_clause}""")
     return statements
 
 
@@ -458,8 +549,8 @@ def get_tables_from_regex(conn):
         return [[args.tables_regex]]
 
     schema = args.clickhouse_database
-    strCommand = "select name from system.tables where database = '{d}' and match(name,'{t}') order by 1".format(
-        d=schema, t=args.tables_regex)
+    strCommand = "select name from system.tables where database = {d} and match(name,{t}) order by 1".format(
+        d=clickhouse_literal(schema), t=clickhouse_literal(args.tables_regex))
     logging.info(f"REGEX QUERY: {strCommand}")
     (rowset, rowcount) = execute_sql(conn, strCommand)
     x = rowset
@@ -479,29 +570,32 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     statements = []
     #
     # Create new threads to execute the sync
+    # This connection serves the catalog queries; compute_checksum opens its own.
+    # It is closed on every path, including an error.
     conn = get_connection(clickhouse_user, clickhouse_password)
-    if where and "{partition_expression}" in where:
-        if partition_key is None:
-            partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
-            logging.info(partition_key)
-            if len(partition_key) > 0 :
-                partition_key = partition_key[0][0]
-        if partition_key is None or partition_key=='':
-            logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
-        where = fstr(where, partition_key)
-    # An empty table goes through the aggregate like any other and prints
-    # md5('0#0#0#0#0#') count 0, the same value as the source side (spec 11.02
-    # section 3.5); there is no separate count pre-check.
-    # generate the file from ClickHouse
-    sign_column = getattr(args, "sign_column", "")
-    if not sign_column:
-        engine_full = get_engine_full(conn, args.clickhouse_database, table)
-        sign_column = sign_column_from_engine(engine_full)
-        logging.info(f"Row filter for {args.clickhouse_database}.{table}: sign column '{sign_column}' derived from engine {engine_full}")
-    (query, select_query, distributed_by,
-     external_table_types, clamped_expression, final_per_partition) = get_table_checksum_query(conn, table)
-    statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition, sign_column)
+    try:
+        if where and "{partition_expression}" in where:
+            if partition_key is None:
+                partition_rows = get_table_partition_key(conn, args.clickhouse_database, table)
+                logging.info(partition_rows)
+                partition_key = partition_rows[0][0] if len(partition_rows) > 0 else None
+            # raises for a table with no partition key: never invalid SQL
+            where = substitute_partition_expression(where, partition_key, f"{args.clickhouse_database}.{table}")
+        # An empty table goes through the aggregate like any other and prints
+        # md5('0#0#0#0#0#') count 0, the same value as the source side (spec 11.02
+        # section 3.5); there is no separate count pre-check.
+        # generate the file from ClickHouse
+        sign_column = getattr(args, "sign_column", "")
+        if not sign_column:
+            engine_full = get_engine_full(conn, args.clickhouse_database, table)
+            sign_column = sign_column_from_engine(engine_full)
+            logging.info(f"Row filter for {args.clickhouse_database}.{table}: sign column '{sign_column}' derived from engine {engine_full}")
+        (query, select_query, distributed_by,
+         external_table_types, clamped_expression, final_per_partition) = get_table_checksum_query(conn, table)
+        statements = select_table_statements(
+            table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition, sign_column)
+    finally:
+        conn.close()
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 

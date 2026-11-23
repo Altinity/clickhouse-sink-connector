@@ -8,9 +8,9 @@ truth (AGENTS.md).
 
 The procedure is the operator's authoritative-side reinsert, made mechanical and count-reconciled:
 
-  dump        capture ``SHOW MASTER STATUS`` (the position to rewind the connector to), then ``util.dumpTables`` every
-              BASE TABLE of each schema with MySQL Shell (zstd, chunked) -- the layout ``clickhouse_loader.py
-              --mysqlshell`` reads.
+  dump        capture binary log position (``SHOW BINARY LOG STATUS`` on MySQL >= 8.2, ``SHOW MASTER STATUS`` on older
+              versions; the position to rewind the connector to), then ``util.dumpTables`` every BASE TABLE of each
+              schema with MySQL Shell (zstd, chunked) -- the layout ``clickhouse_loader.py --mysqlshell`` reads.
   patch       phase 1, every schema: schema-drift check -> ``<schema><suffix>.<table>`` created ``AS`` the live table
               and filled from the dump by the loader -> loaded rows == dump rows (exact) -> optional canary hash join
               on tables known to be unchanged. Phase 2, only if every canary passed: one ``ALTER TABLE ... REPLACE
@@ -63,6 +63,8 @@ HISTORY_COLUMNS = {"_valid_from", "_valid_to"}
 # Legacy engine ReplacingMergeTree(_version) + `_sign Int8` (no DEFAULT): the connector writes 1 for every live row and
 # -1 only for a DELETE (PreparedStatementFieldMapper.handleReplacingMergeTreeDeleteColumn).
 LEGACY_SIGN_COLUMN = "_sign"
+# Delete-marker column names the connector has used across versions.
+DELETE_MARKER_COLUMNS = ("is_deleted", "_is_deleted", "__is_deleted")
 LOG_FILE = None
 
 
@@ -88,7 +90,7 @@ def sql_str(value: str) -> str:
 # Pure helpers (unit-tested in sink-connector/python/db_load/tests/test_mysql_resync.py)
 # --------------------------------------------------------------------------------------------------------------------
 MYSQL_TYPE_MAP = [
-    (r"^tinyint\(1\)", "Int8"), (r"^tinyint.*unsigned", "UInt8"), (r"^tinyint", "Int8"),
+    (r"^tinyint.*unsigned", "UInt8"), (r"^tinyint", "Int8"),  # tinyint(1) is Int8, tinyint(1) unsigned is UInt8
     (r"^smallint.*unsigned", "UInt16"), (r"^smallint", "Int16"),
     (r"^mediumint.*unsigned", "UInt32"), (r"^mediumint", "Int32"),
     (r"^int.*unsigned", "UInt32"), (r"^int", "Int32"),
@@ -99,8 +101,8 @@ MYSQL_TYPE_MAP = [
     (r"^timestamp\((\d)\)", r"DateTime64(\1)"), (r"^timestamp", "DateTime64(3)"),
     (r"^date$", "Date32"), (r"^time", "String"), (r"^year", "Int32"),
     (r"^(var)?char", "String"), (r"^(tiny|medium|long)?text", "String"), (r"^enum", "String"), (r"^set\(", "String"),
-    (r"^(var)?binary", "String"), (r"^(tiny|medium|long)?blob", "String"), (r"^json", "String"), (r"^bit", "String"),
-]
+    (r"^(var)?binary", "String"), (r"^(tiny|medium|long)?blob", "String"), (r"^json", "String"), (r"^bit\s*(\(\s*1\s*\))?$", "Bool"), (r"^bit", "String"),
+]  # BIT(1) is Bool as on the streaming path (Debezium emits BOOLEAN); BIT(n>1) is the connector's hex text
 
 
 def mysql_to_ch(mysql_type: str, nullable: bool) -> str:
@@ -112,6 +114,11 @@ def mysql_to_ch(mysql_type: str, nullable: bool) -> str:
             ch = re.sub(pattern, replacement, t) if "\\" in replacement else replacement
             break
     return f"Nullable({ch})" if nullable else ch
+
+
+# A column type: the keyword, an optional parenthesised argument list, then unsigned/zerofill. The argument list is read
+# with quoted strings as units, so ENUM('a b','c,d','e)') / SET(...) values holding spaces, commas or ')' stay whole.
+COLUMN_TYPE_PATTERN = r"\w+(?:\s*\((?:'(?:[^'\\]|\\.|'')*'|[^)'])*\))?(?:\s+unsigned)?(?:\s+zerofill)?"
 
 
 def parse_mysql_ddl(ddl_text: str) -> list[tuple[str, str, bool, bool]]:
@@ -129,7 +136,7 @@ def parse_mysql_ddl(ddl_text: str) -> list[tuple[str, str, bool, bool]]:
             break
         if not line.startswith("`"):
             continue
-        m = re.match(r"`((?:[^`]|``)+)`\s+(\S+(?:\([^)]*\))?(?:\s+unsigned)?(?:\s+zerofill)?)\s*(.*)$", line, re.I)
+        m = re.match(r"`((?:[^`]|``)+)`\s+(" + COLUMN_TYPE_PATTERN + r")\s*(.*)$", line, re.I)
         if not m:
             continue
         name, ctype = m.group(1).replace("``", "`"), m.group(2)
@@ -325,16 +332,57 @@ def mysqlsh_run(mysqlsh: str, uri: str, password: str, mode_args: list[str], std
     return p.returncode, p.stdout, p.stderr
 
 
+def binary_log_status_statement(version: str) -> str:
+    """SHOW BINARY LOG STATUS from MySQL 8.2 (8.4 removed SHOW MASTER STATUS), SHOW MASTER STATUS before or on MariaDB."""
+    text = str(version or "")
+    if "mariadb" in text.lower():
+        return "SHOW MASTER STATUS"
+    match = re.match(r"(\d+)\.(\d+)", text)
+    if match and (int(match.group(1)), int(match.group(2))) >= (8, 2):
+        return "SHOW BINARY LOG STATUS"
+    return "SHOW MASTER STATUS"
+
+
+def parse_mysqlsh_json_rows(out: str) -> list[dict]:
+    """Parse NDJSON rows emitted by ``mysqlsh --sql --result-format=json/raw``.
+
+    With ``--passwords-from-stdin``, mysqlsh writes its password prompt (often ANSI-styled) to stdout without a
+    trailing newline right before the first JSON object. Scanning from each ``{`` on a line recovers line 1 (metadata
+    or single-statement status) instead of silently dropping it.
+    """
+    rows = []
+    for line in out.splitlines():
+        pos = line.find("{")
+        while pos >= 0:
+            try:
+                doc = json.loads(line[pos:])
+            except json.JSONDecodeError:
+                pos = line.find("{", pos + 1)
+                continue
+            if isinstance(doc, dict):
+                rows.append(doc)
+            break
+    return rows
+
+
 def capture_binlog_position(mysqlsh: str, uri: str, password: str) -> dict:
-    rc, out, err = mysqlsh_run(mysqlsh, uri, password, ["--sql", "--result-format=json/raw", "-e",
-                               "SELECT NOW() AS taken_at, @@hostname AS source_host, UNIX_TIMESTAMP() AS ts_sec; SHOW MASTER STATUS;"])
+    rc, out, err = mysqlsh_run(
+        mysqlsh, uri, password,
+        ["--sql", "--result-format=json/raw", "-e",
+         "SELECT @@version AS version, NOW() AS taken_at, @@hostname AS source_host, UNIX_TIMESTAMP() AS ts_sec;"],
+    )
     if rc != 0:
-        raise RuntimeError(f"mysqlsh SHOW MASTER STATUS failed rc={rc}: {err.strip()[:500]}")
-    docs = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
-    meta = next((d for d in docs if "taken_at" in d), {})
+        raise RuntimeError(f"mysqlsh metadata query failed rc={rc}: {err.strip()[:500]}")
+    meta_docs = parse_mysqlsh_json_rows(out)
+    meta = next((d for d in meta_docs if "taken_at" in d), {})
+    stmt = binary_log_status_statement(meta.get("version", ""))
+    rc, out, err = mysqlsh_run(mysqlsh, uri, password, ["--sql", "--result-format=json/raw", "-e", f"{stmt};"])
+    if rc != 0:
+        raise RuntimeError(f"mysqlsh {stmt} failed rc={rc}: {err.strip()[:500]}")
+    docs = parse_mysqlsh_json_rows(out)
     status = next((d for d in docs if "File" in d), None)
     if not status:
-        raise RuntimeError("SHOW MASTER STATUS returned no row (binary logging disabled or missing privilege)")
+        raise RuntimeError(f"{stmt} returned no row (binary logging disabled or missing privilege)")
     return {"taken_at": meta.get("taken_at"), "source_host": meta.get("source_host"), "ts_sec": int(meta.get("ts_sec", 0)),
             "file": status["File"], "pos": int(status["Position"]), "gtid_executed": status.get("Executed_Gtid_Set", "")}
 
@@ -452,15 +500,30 @@ def column_names(ch: ClickHouse, schema: str, table: str) -> set:
     return {r[0] for r in ch.rows(f"SELECT name FROM system.columns WHERE database='{schema}' AND table='{table}'")}
 
 
+def canary_filter(live_columns: set) -> tuple[list[str], str]:
+    """(columns left out of the row hash, WHERE clause on the live table) for the canary comparison.
+
+    The connector's bookkeeping columns differ between a reload and the streamed row by design: ``_version`` always,
+    the delete marker (``is_deleted``, ``_is_deleted`` or ``__is_deleted``) and the legacy ``_sign``. Only columns the
+    live table has are named (``* EXCEPT`` of an absent column is an error). Deleted rows are not compared: a live
+    marker must be 0 and a live ``_sign`` positive (the connector writes 1, and -1 only for a DELETE)."""
+    markers = [c for c in DELETE_MARKER_COLUMNS if c in live_columns]
+    exclude = ["_version"] + markers
+    conditions = [f"{q(c)} = 0" for c in markers]
+    if LEGACY_SIGN_COLUMN in live_columns:
+        exclude.append(LEGACY_SIGN_COLUMN)
+        conditions.append(f"{q(LEGACY_SIGN_COLUMN)} > 0")
+    return exclude, ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+
 def canary_ratio(ch: ClickHouse, schema: str, restore_db: str, table: str, sorting_key: str):
     """(identical, joined) rows between the scratch and live copies, or None when the sorting key is not plain columns."""
     pk = plain_identifiers(sorting_key)
     if not pk:
         return None
     pkl = ", ".join(q(c) for c in pk)
-    has_del = "is_deleted" in column_names(ch, schema, table)
-    exc = "(_version, is_deleted)" if has_del else "(_version)"
-    where = "WHERE is_deleted = 0" if has_del else ""
+    excluded, where = canary_filter(column_names(ch, schema, table))
+    exc = "(" + ", ".join(q(c) for c in excluded) + ")"
     r = ch.rows(f"SELECT countIf(r.h = l.h), count() FROM (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(restore_db)}.{q(table)}) AS r "
                 f"INNER JOIN (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(schema)}.{q(table)} FINAL {where}) AS l USING ({pkl}) "
                 f"SETTINGS join_algorithm = 'parallel_hash'")

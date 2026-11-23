@@ -46,7 +46,7 @@ class TestBitColumnRendering:
 
     def test_binary_types_still_follow_the_encoding(self):
         assert expression("varbinary", "varbinary(16)", "base64") == \
-            "replace(to_base64(cast(`c` as binary)),'\\n','')"
+            "replace(to_base64(cast(`c` as binary)),char(10 using ascii),'')"
         assert expression("blob", "blob", "hex") == "lower(hex(cast(`c` as binary)))"
 
 

@@ -150,7 +150,7 @@ public class Metrics {
     /**
      * Flag indicating whether metrics collection is enabled.
      */
-    private static boolean enableMetrics = false;
+    private static volatile boolean enableMetrics = false;
 
     /**
      * Timestamp indicating the connector start time.
@@ -168,7 +168,7 @@ public class Metrics {
      * @param enableFlag  the flag to enable or disable metrics collection.
      * @param metricsPort the port for Prometheus to expose metrics.
      */
-    public static void initialize(String enableFlag, String metricsPort) {
+    public static synchronized void initialize(String enableFlag, String metricsPort) {
 
         // An engine restart in the same process initializes again. Release
         // the previous registry first: its JvmGcMetrics binder installs GC
@@ -178,12 +178,16 @@ public class Metrics {
         if (meterRegistry != null) {
             stop();
         }
+        // enableMetrics becomes true only after the HTTP server is bound below
+        // (spec 10.03 section 3.5): a flag that is set before the bind lies
+        // about a registry nobody can scrape when the bind fails.
+        enableMetrics = false;
 
         connectorStartTimeMs = System.currentTimeMillis();
 
-        parseConfiguration(enableFlag, metricsPort);
+        boolean requested = parseConfiguration(enableFlag, metricsPort);
 
-        if (enableMetrics) {
+        if (requested) {
             collectorRegistry = new CollectorRegistry();
             meterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT, collectorRegistry, Clock.SYSTEM);
 
@@ -194,9 +198,25 @@ public class Metrics {
             new ProcessorMetrics().bindTo(meterRegistry);
             new JvmThreadMetrics().bindTo(meterRegistry);
 
-            exposePrometheusPort(meterRegistry);
             registerMetrics(collectorRegistry);
+            if (exposePrometheusPort(meterRegistry)) {
+                enableMetrics = true;
+            } else {
+                // Bind failed: release what was built so the state is consistent
+                // (disabled, no registry) rather than half-initialised.
+                log.error("METRICS disabled: the Prometheus HTTP server could not be started on port {}", port);
+                stop();
+            }
         }
+    }
+
+    /**
+     * Whether metric updates are being recorded: true only between a
+     * successful {@link #initialize} (HTTP server bound) and {@link #stop()}.
+     * Package-private for the test.
+     */
+    static synchronized boolean isEnabled() {
+        return enableMetrics;
     }
 
     /**
@@ -214,24 +234,28 @@ public class Metrics {
      *
      * @param enableFlag  the flag to enable or disable metrics.
      * @param metricsPort the port to expose metrics on.
+     * @return whether the configuration requests metrics; this is a request,
+     *         not the {@code enableMetrics} state, which follows the bind.
      */
-    private static void parseConfiguration(String enableFlag, String metricsPort) {
+    private static boolean parseConfiguration(String enableFlag, String metricsPort) {
+        boolean requested = false;
         if (enableFlag != null) {
             try {
-                enableMetrics = Boolean.parseBoolean(enableFlag);
-                log.info("METRICS enabled: " + enableMetrics);
+                requested = Boolean.parseBoolean(enableFlag);
+                log.info("METRICS enabled: " + requested);
             } catch (Exception e) {
                 log.error("Exception parsing Metrics flag", e);
             }
         }
         if (metricsPort != null) {
-            log.info("METRICS server started, Port: " + metricsPort);
+            log.info("METRICS server port: " + metricsPort);
             try {
                 port = Integer.parseInt(metricsPort);
             } catch (NumberFormatException ne) {
                 log.error("Error parsing metrics port", ne);
             }
         }
+        return requested;
     }
 
     /**
@@ -319,8 +343,10 @@ public class Metrics {
      * Exposes Prometheus metrics on the specified port.
      *
      * @param prometheusMeterRegistry the Prometheus meter registry.
+     * @return true when the server is bound and started, false when the bind
+     *         failed (logged with the port and cause).
      */
-    private static void exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
+    private static boolean exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
         try {
             server = HttpServer.create(new InetSocketAddress(port), 0);
             server.createContext("/metrics", httpExchange -> {
@@ -343,16 +369,28 @@ public class Metrics {
                 }
             });
 
-            new Thread(server::start).start();
-        } catch (IOException e) {
-            log.error("Cannot start HTTP server for Prometheus on /metrics", e);
+            // Started on the caller's thread (HttpServer.start() does not block): a
+            // detached thread let stop() run first and stop a server that start()
+            // then rejected with "IllegalStateException: server in wrong state".
+            server.start();
+            return true;
+        } catch (IOException | IllegalArgumentException | SecurityException e) {
+            log.error("Cannot start HTTP server for Prometheus on /metrics (port {})", port, e);
+            server = null;
+            return false;
         }
     }
 
     /**
-     * Stops the metrics server.
+     * Stops the metrics server, disables recording and releases the registry.
+     * Synchronized with {@link #initialize} so a stop never interleaves with a
+     * start.
      */
-    public static void stop() {
+    public static synchronized void stop() {
+        enableMetrics = false;
+        // Shutdown path of both the Kafka Connect task and the lightweight
+        // engine: write the trailing suppressed lossy-conversion counts.
+        com.altinity.clickhouse.sink.connector.converters.LossyConversionReporter.flush();
         if (server != null) {
             server.stop(0);
             server = null;

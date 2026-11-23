@@ -326,15 +326,16 @@ public class ClickHouseAutoCreateTable
 
         if (primaryKey != null && !primaryKey.isEmpty()
                 && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+            // Backtick-quoted like the column definitions and the keyless path below, so a key
+            // column that is a reserved word or contains a special character stays valid.
+            String quotedKey = primaryKey.stream()
+                    .map(c -> "`" + c + "`")
+                    .collect(Collectors.joining(","));
             createTableSyntax.append(PRIMARY_KEY).append("(");
-            createTableSyntax.append(primaryKey.stream()
-                    .map(Object::toString)
-                    .collect(Collectors.joining(",")));
+            createTableSyntax.append(quotedKey);
             createTableSyntax.append(") ");
             createTableSyntax.append(ORDER_BY).append("(");
-            createTableSyntax.append(primaryKey.stream()
-                    .map(Object::toString)
-                    .collect(Collectors.joining(",")));
+            createTableSyntax.append(quotedKey);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                 createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
             }
@@ -544,7 +545,7 @@ public class ClickHouseAutoCreateTable
     }
     
     public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
-        String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
+        String sql = "CREATE DATABASE IF NOT EXISTS `" + databaseName + "`";
         log.info(String.format(
                 "**** AUTO CREATE HISTORY DATABASE for database(%s), Query :%s)",
                 databaseName, sql));

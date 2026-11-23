@@ -152,6 +152,13 @@ public class ReplicationHistoryHandler {
     private static final long SNOWFLAKE_DISCRIMINATOR_MASK = (1L << SnowFlakeId.GTID_FIELD_BITS) - 1;
 
     /**
+     * A sequence counter at or above this (10^15 rows in one window) cannot come from
+     * the counter: it is the carry of a row without a GTID lifted above earlier GTID
+     * versions into the snowflake domain (spec 02.01 section 3.1.2).
+     */
+    static final long MERGED_DOMAIN_COUNTER_MIN = 1_000_000_000_000_000L;
+
+    /**
      * The seeds of the lightweight sequence counter (spec 02.03; the constants of
      * the same name in the lightweight dispatch loop). Frozen by spec 02.01
      * section 4 as part of the 2.8.0 version contract, which is why they can be
@@ -231,7 +238,9 @@ public class ReplicationHistoryHandler {
         long tsMs;
         long discriminator;
         if (record.getGtid() != -1L) {
-            tsMs = record.getVersionTs() > 0 ? record.getVersionTs() : record.getTs_ms();
+            // The same timestamp calculateVersion feeds the snowflake, so that on the
+            // GTID path the history version IS the standard version (spec 02.01 3.5 b).
+            tsMs = record.versionTimestamp();
             discriminator = record.getGtid();
         } else if (record.getSequenceNumber() != -1L) {
             long seq = record.getSequenceNumber();
@@ -250,6 +259,15 @@ public class ReplicationHistoryHandler {
             long seed = counter >= SEQUENCE_START ? SEQUENCE_START
                     : counter >= SEQUENCE_START_INITIAL ? SEQUENCE_START_INITIAL : 0L;
             discriminator = counter - seed;
+            if (counter >= MERGED_DOMAIN_COUNTER_MIN) {
+                // A row without a GTID that the version sequence carried above earlier
+                // GTID (snowflake) versions (spec 02.01 section 3.1.2): its standard
+                // version already lies in the snowflake domain -- above every GTID
+                // version assigned before it, and the sequence raises every later GTID
+                // version to at least it -- so it is its own history version. No real
+                // counter window reaches MERGED_DOMAIN_COUNTER_MIN rows.
+                return seq;
+            }
             if (discriminator < 0 || discriminator > SNOWFLAKE_DISCRIMINATOR_MASK) {
                 throw new IllegalStateException(String.format(
                         "History version for topic '%s' at kafka offset %d cannot be encoded: sequence %d "

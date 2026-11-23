@@ -299,6 +299,20 @@ def verify_dump(args, mysql_user, mysql_password):
     return position
 
 
+def build_where_option(database, tables_to_dump, where, schema_only):
+    """The ``where`` option of util.dumpTables: {'<schema>.<table>': '<condition>'} for every dumped table.
+
+    ``--where`` is never dropped silently (Spec 13.03 D-13.03-11): an empty condition, or a condition with a
+    schema-only dump (no rows are dumped, so nothing would be filtered), is refused with ValueError."""
+    if not isinstance(where, str) or not where.strip():
+        raise ValueError("--where must be a non-empty SQL condition")
+    if schema_only:
+        raise ValueError("--where filters rows and cannot be combined with --schema_only (no rows are dumped)")
+    if not tables_to_dump:
+        raise ValueError("--where was given but no table is selected to apply it to")
+    return {f"{database}.{table}": where.strip() for table in tables_to_dump}
+
+
 def generate_mysqlsh_dump_tables_clause(dump_dir,
                                         dry_run,
                                         database,
@@ -314,6 +328,8 @@ def generate_mysqlsh_dump_tables_clause(dump_dir,
     dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk, "consistent":int(consistent)}
     if partition_map and not schema_only:
         dump_options['partitions'] = partition_map
+    if where is not None:
+        dump_options['where'] = build_where_option(database, tables_to_dump, where, schema_only)
     logging.info(f"{dump_options}")
     dump_clause=f""" util.dumpTables('{database}',{table_array_clause}, '{dump_dir}', {dump_options} ); """
     logging.info(dump_clause)

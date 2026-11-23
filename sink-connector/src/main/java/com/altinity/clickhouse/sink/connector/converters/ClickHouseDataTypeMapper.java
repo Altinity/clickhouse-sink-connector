@@ -37,7 +37,10 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -461,6 +464,12 @@ public class ClickHouseDataTypeMapper {
                         MicroTimestamp.SCHEMA_NAME),
                 ClickHouseDataType.DateTime64);
 
+        // Datetime with nanoseconds precision
+        dataTypesMap.put(
+                new MutablePair<>(Schema.INT64_SCHEMA.type(),
+                        NanoTimestamp.SCHEMA_NAME),
+                ClickHouseDataType.DateTime64);
+
         // BLOB -> String
         dataTypesMap.put(
                 new MutablePair<>(Schema.Type.BYTES, null),
@@ -652,9 +661,13 @@ public class ClickHouseDataTypeMapper {
             } else if ((schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME))
                     || (schemaName != null
-                    && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME))) {
+                    && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME))
+                    || (schemaName != null
+                    && schemaName.equalsIgnoreCase(NanoTimestamp.SCHEMA_NAME))) {
                 // DateTime -> INT64 + Timestamp (Debezium)
                 // MicroTimestamp ("yyyy-MM-dd HH:mm:ss")
+                // NanoTimestamp: the DDL maps it to DateTime64(9, 'UTC'), so the value is
+                // converted here rather than bound as a raw Long (NEW-J7).
                 isFieldDateTime = true;
             } else {
                 isFieldTypeBigInt = true;
@@ -777,6 +790,11 @@ public class ClickHouseDataTypeMapper {
                     ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, sourceTimeZone,
                             serverTimeZone, clickHouseDataType, columnTimeZone, rangePolicy));
                 }
+                else if (schemaName != null && schemaName.equalsIgnoreCase(NanoTimestamp.SCHEMA_NAME)) {
+                    // DATETIME(7), DATETIME(8), DATETIME(9) sources: nanoseconds past the epoch, zone-less
+                    ps.setString(index, nanoTimestampText(value, sourceTimeZone, instantFormatZone,
+                            rangePolicy == null ? DebeziumConverter.RangePolicy.CLAMP : rangePolicy));
+                }
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
@@ -864,10 +882,11 @@ public class ClickHouseDataTypeMapper {
             if (wkbValue instanceof byte[]) {
                 wkbBytes = (byte[]) wkbValue;
             } else if (wkbValue instanceof ByteBuffer) {
-                ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                // duplicate(): read through a view so the shared buffer's position and
+                // limit are never moved (rewind() reset a non-zero position to 0).
+                ByteBuffer byteBuffer = ((ByteBuffer) wkbValue).duplicate();
                 wkbBytes = new byte[byteBuffer.remaining()];
                 byteBuffer.get(wkbBytes);
-                byteBuffer.rewind();
             } else {
                 throw new IllegalArgumentException(String.format(
                         "Geometry value%s carries no WKB payload (wkb is %s); refusing to store an empty polygon in its place",
@@ -962,10 +981,9 @@ public class ClickHouseDataTypeMapper {
                 if (wkbValue instanceof byte[]) {
                     wkbBytes = (byte[]) wkbValue;
                 } else if (wkbValue instanceof ByteBuffer) {
-                    ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                    ByteBuffer byteBuffer = ((ByteBuffer) wkbValue).duplicate();
                     wkbBytes = new byte[byteBuffer.remaining()];
                     byteBuffer.get(wkbBytes);
-                    byteBuffer.rewind();
                 } else {
                     throw new IllegalArgumentException(String.format(
                             "Point value%s carries no WKB payload (wkb is %s) and the ClickHouse column is String; "
@@ -995,11 +1013,10 @@ public class ClickHouseDataTypeMapper {
                 byte[] unscaledValueBytes;
                 if (unscaledValueObject instanceof ByteBuffer) {
                     ByteBuffer unscaledByteBuffer =
-                            (ByteBuffer) unscaledValueObject;
+                            ((ByteBuffer) unscaledValueObject).duplicate();
                     unscaledValueBytes =
                             new byte[unscaledByteBuffer.remaining()];
                     unscaledByteBuffer.get(unscaledValueBytes);
-                    unscaledByteBuffer.rewind();
                 } else if (unscaledValueObject instanceof byte[]) {
                     unscaledValueBytes =
                             (byte[]) unscaledValueObject;
@@ -1037,6 +1054,30 @@ public class ClickHouseDataTypeMapper {
             result = false;
         }
         return result;
+    }
+
+    /**
+     * Renders an {@code io.debezium.time.NanoTimestamp} value as a
+     * {@code yyyy-MM-dd HH:mm:ss.SSSSSSSSS} literal in the column's zone.
+     * The value is the number of nanoseconds past the epoch and carries no zone:
+     * its digits are the source wall time, read as UTC (the same encoding as
+     * {@code MicroTimestamp}). A wall time in the source zone is converted to
+     * the instant it names, then rendered in {@code formatZone}; with equal
+     * zones the digits pass through unchanged. A value outside the DateTime64
+     * range is bounded by the range policy.
+     */
+    static String nanoTimestampText(Object value, ZoneId sourceTimeZone, ZoneId formatZone,
+                                    DebeziumConverter.RangePolicy policy) {
+        long epochNanos = ((Number) value).longValue();
+        LocalDateTime wall = LocalDateTime.ofInstant(
+                Instant.ofEpochSecond(Math.floorDiv(epochNanos, 1_000_000_000L),
+                        Math.floorMod(epochNanos, 1_000_000_000L)),
+                ZoneOffset.UTC);
+        Instant instant = wall.atZone(sourceTimeZone).toInstant();
+        boolean[] rangeExceeded = new boolean[1];
+        Instant bounded = policy.boundDateTime(instant, ClickHouseDataType.DateTime64, rangeExceeded);
+        ZoneId zone = rangeExceeded[0] ? ZoneOffset.UTC : formatZone;
+        return bounded.atZone(zone).format(DebeziumConverter.NANOS_FORMAT);
     }
 
     /**

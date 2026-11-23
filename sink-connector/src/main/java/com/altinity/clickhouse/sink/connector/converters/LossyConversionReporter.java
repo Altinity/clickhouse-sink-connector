@@ -5,10 +5,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -23,6 +23,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * summary WARN per kind is written at most every {@value #SUMMARY_INTERVAL_MILLIS}
  * milliseconds. The log therefore has one line per column per kind plus a
  * bounded number of summaries, however many rows are lossy.
+ *
+ * <p>Reporting is lock-free: writer threads never serialize on a shared
+ * monitor. {@link #flush()} writes the trailing suppressed counts at shutdown.
  *
  * <p>Strict mode ({@code clamp.out.of.range=false}) does not come through here:
  * {@link DebeziumConverter.RangePolicy} throws instead.
@@ -63,19 +66,30 @@ public final class LossyConversionReporter {
     /** At most one summary WARN per kind per this many milliseconds. */
     static final long SUMMARY_INTERVAL_MILLIS = 5L * 60L * 1000L;
 
+    /** Marks a kind whose first WARN has not been written yet (no summary window is open). */
+    private static final long NO_WINDOW = Long.MIN_VALUE;
+
     private static final Logger log = LogManager.getLogger(LossyConversionReporter.class);
 
+    // Lock-free state. The per-kind maps are populated once in the static
+    // initializer and never structurally modified afterwards, so concurrent
+    // readers need no lock. FIRST_SEEN is a ConcurrentHashMap key set whose
+    // add() is atomic (exactly one thread is the first reporter of a
+    // (kind, column) pair), and each kind's summary window rolls over with a
+    // compare-and-set on its start time (exactly one thread wins a rollover
+    // and takes the suppressed count).
     private static final Map<Kind, AtomicLong> TOTALS = new EnumMap<>(Kind.class);
     private static final Map<Kind, AtomicLong> WARNINGS = new EnumMap<>(Kind.class);
     private static final Map<Kind, AtomicLong> SUPPRESSED = new EnumMap<>(Kind.class);
-    private static final Map<Kind, Long> LAST_LOGGED_MILLIS = new EnumMap<>(Kind.class);
-    private static final Set<String> FIRST_SEEN = new HashSet<>();
+    private static final Map<Kind, AtomicLong> LAST_LOGGED_MILLIS = new EnumMap<>(Kind.class);
+    private static final Set<String> FIRST_SEEN = ConcurrentHashMap.newKeySet();
 
     static {
         for (Kind kind : Kind.values()) {
             TOTALS.put(kind, new AtomicLong());
             WARNINGS.put(kind, new AtomicLong());
             SUPPRESSED.put(kind, new AtomicLong());
+            LAST_LOGGED_MILLIS.put(kind, new AtomicLong(NO_WINDOW));
         }
     }
 
@@ -105,24 +119,46 @@ public final class LossyConversionReporter {
     }
 
     /** Clears every count and the first-seen memory. Tests only. */
-    static synchronized void resetForTests() {
+    static void resetForTests() {
         for (Kind kind : Kind.values()) {
             TOTALS.get(kind).set(0);
             WARNINGS.get(kind).set(0);
             SUPPRESSED.get(kind).set(0);
-            LAST_LOGGED_MILLIS.remove(kind);
+            LAST_LOGGED_MILLIS.get(kind).set(NO_WINDOW);
         }
         FIRST_SEEN.clear();
     }
 
-    static synchronized void report(Kind kind, String column, String source, String stored, long nowMillis) {
+    /**
+     * Writes one summary WARN for every kind that still has suppressed
+     * conversions, so the trailing counts of a run -- conversions that arrived
+     * after the last rate-limited summary -- are not lost at shutdown.
+     * Safe to call at any time and from any thread; each suppressed
+     * conversion is reported by exactly one summary.
+     */
+    public static void flush() {
+        flush(System.currentTimeMillis());
+    }
+
+    static void flush(long nowMillis) {
+        for (Kind kind : Kind.values()) {
+            long suppressed = SUPPRESSED.get(kind).getAndSet(0);
+            if (suppressed > 0) {
+                WARNINGS.get(kind).incrementAndGet();
+                LAST_LOGGED_MILLIS.get(kind).set(nowMillis);
+                logSummary(kind, suppressed);
+            }
+        }
+    }
+
+    static void report(Kind kind, String column, String source, String stored, long nowMillis) {
         TOTALS.get(kind).incrementAndGet();
         Metrics.incrementLossyConversion(kind.label());
 
         String where = column == null ? "(unknown column)" : column;
         if (FIRST_SEEN.add(kind.label() + '|' + where)) {
             WARNINGS.get(kind).incrementAndGet();
-            LAST_LOGGED_MILLIS.putIfAbsent(kind, nowMillis);
+            LAST_LOGGED_MILLIS.get(kind).compareAndSet(NO_WINDOW, nowMillis);
             log.warn("LOSSY_CONVERSION kind={} column={} source={} stored={}. First occurrence in this column; "
                             + "later ones are counted in clickhouse_sink_lossy_conversions_total{kind=\"{}\"} "
                             + "and summarised at most every 5 minutes. To refuse such values instead, set "
@@ -131,14 +167,19 @@ public final class LossyConversionReporter {
             return;
         }
         SUPPRESSED.get(kind).incrementAndGet();
-        Long last = LAST_LOGGED_MILLIS.get(kind);
-        if (last != null && nowMillis - last >= SUMMARY_INTERVAL_MILLIS) {
+        AtomicLong window = LAST_LOGGED_MILLIS.get(kind);
+        long last = window.get();
+        if (last != NO_WINDOW && nowMillis - last >= SUMMARY_INTERVAL_MILLIS
+                && window.compareAndSet(last, nowMillis)) {
             long suppressed = SUPPRESSED.get(kind).getAndSet(0);
             WARNINGS.get(kind).incrementAndGet();
-            LAST_LOGGED_MILLIS.put(kind, nowMillis);
-            log.warn("LOSSY_CONVERSION kind={} summary: {} conversions since the last summary were counted, "
-                            + "not logged (total {} since start). See clickhouse_sink_lossy_conversions_total.",
-                    kind.label(), suppressed, TOTALS.get(kind).get());
+            logSummary(kind, suppressed);
         }
+    }
+
+    private static void logSummary(Kind kind, long suppressed) {
+        log.warn("LOSSY_CONVERSION kind={} summary: {} conversions since the last summary were counted, "
+                        + "not logged (total {} since start). See clickhouse_sink_lossy_conversions_total.",
+                kind.label(), suppressed, TOTALS.get(kind).get());
     }
 }

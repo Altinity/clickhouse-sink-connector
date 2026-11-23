@@ -18,6 +18,7 @@ therefore not a barrier at all; see §3.1 and the formal counterexample in §3.4
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
+- **Schema visibility**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DDLSchemaChangeWaiter.java` (`awaitSchemaVisibility`, strict; `waitForSchemaVisibility`, lenient)
 - **Method**: `private void drainBeforeDDL()`
 - **Barrier predicate**: `private boolean isPipelineQuiescent()` — the SAME
   predicate that gates the control-record offset commit (spec 01.06 §3.2), so
@@ -193,6 +194,18 @@ decision: its flag is computed by the parser, after the drain, and a suppressed
   worker) aborts the DDL attempt loudly instead of applying it over pending
   rows; a barrier that is merely slow is waited for, visibly (WARN per
   interval), never silently abandoned and never turned into a terminal stop.
+- **Invariant I9 (Schema visibility fails closed)**: an executed ALTER whose
+  column change is not observed in `system.columns` within
+  `ddl.schema.change.timeout.ms` raises
+  `DDLSchemaChangeWaiter.SchemaVisibilityTimeoutException`; the DDL is then
+  neither acknowledged nor followed by DML written against a schema that is not
+  there. The lenient `waitForSchemaVisibility()` (returns false) remains for
+  callers that only want a best-effort wait.
+- **Invariant I5/I9 (A succeeded DDL is not re-executed)**: the retry loop of
+  `performDDLOperation` repeats only the steps that have not completed. Once the
+  ClickHouse statements succeeded, a failure of a later step (history
+  bookkeeping, key rebuild, audit row, acknowledgement) is retried without
+  executing the DDL again, and `errors.max.retries=0` still makes one attempt.
 
 ---
 
@@ -238,6 +251,8 @@ decision: its flag is computed by the parser, after the drain, and a suppressed
   acknowledged: the drain blocks until it is released. Fails on the pre-fix
   code.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull` — single-threaded mode.
+- `DDLSchemaChangeWaiterFailClosedTest` — `timeoutFailsClosed`, `lenientWaitReturnsFalseOnTimeout`, `timeoutCarriesPollingError`, `interruptFailsClosedAndKeepsFlag`, `renameColumnWaitsForBothNames`, `renameColumnTimeoutFailsClosed`, `modifyColumnWaitsForTheNewType`, `modifyColumnTimeoutFailsClosed`, `modifyWithoutTypeChecksPresenceOnly`, `unqualifiedAlterUsesTheSessionDatabase`, `unqualifiedAlterWithoutSessionDatabaseIsSkipped`, `backtickedTargetWithDots`, `dropThenAddSameColumnExpectsPresent`, `addThenDropSameColumnExpectsAbsent`, `netStateIsOrderSensitive`, `commaIsNotPartOfTheName`, `literalsAreEscaped`, `escapeSqlLiteralHandlesQuotesAndBackslashes`.
+- `DdlRetryAndMetricsTest` — `postDdlFailureDoesNotReExecuteTheDdl` (the ALTER runs once although the acknowledgement fails and is retried), `zeroMaxRetriesStillAttemptsOnce`, `invisibleColumnFailsTheDdlClosed` (end to end: the timeout fails the DDL and nothing is acknowledged), `splitStatementsKeepsMultiLineLiteralsWhole`, `splitStatementsSeparatesOnTopLevelNewlines`, `splitStatementsHonoursEveryQuoteKind`, `multiLineCommentIsExecutedOnce`, `alterWithRenameRunsTwoStatements`, `successfulDdlIsCountedAsNotFailed`, `failedDdlIsCountedAsFailed`, `appliedDdlIsRecordedThroughTheRecordPath`, `failedDdlIsRecordedThroughTheRecordPath`.
 - Mutation check: reverting step 1 to `while (!records.isEmpty())` turns the
   three new tests red; restoring it turns them green.
 
@@ -276,12 +291,21 @@ The barrier trades availability for correctness on purpose: while it is held, NO
 
 - **FM-06.01-4 DDL storm (hundreds of ALTERs)**
   - **Trigger**: a migration or ORM issues hundreds of `ALTER TABLE` statements interleaved with DML.
-  - **Behaviour**: every applied DDL pays, on the single Debezium thread and with every table stopped: a full drain of the DML queued since the previous DDL, `pause()`/`awaitQuiescent()`, two `system.columns` reads by the translator (`TargetSchemaLookup`), the ALTER round trip (for `Replicated*` tables through Keeper), and `DDLSchemaChangeWaiter.waitForSchemaVisibility()`: a fixed 500 ms sleep (`5 x ddl.schema.change.poll.interval.ms`) for any statement without `ADD`/`DROP COLUMN`, polling up to `ddl.schema.change.timeout.ms` (30 s) for those with. 300 `MODIFY COLUMN` statements therefore cost at least 150 s of pure sleep. Ignored statements take none of this (§3.5).
-  - **Detection**: INFO `***** DDL received, Flush all existing records` and `ClickHouse DDL: <stmt>` per statement; lag grows. No metric counts DDLs usefully: `clickhouse.sink.ddl` is incremented by the elapsed time of `updateMetrics()` itself (about 0) under the tag `fail=true` on SUCCESS (`DebeziumChangeEventCapture.updateMetrics`, `Metrics.updateDdlMetrics`).
+  - **Behaviour**: every applied DDL pays, on the single Debezium thread and with every table stopped: a full drain of the DML queued since the previous DDL, `pause()`/`awaitQuiescent()`, two `system.columns` reads by the translator (`TargetSchemaLookup`), the ALTER round trip (for `Replicated*` tables through Keeper), and `DDLSchemaChangeWaiter.awaitSchemaVisibility()`: a fixed 500 ms sleep (`5 x ddl.schema.change.poll.interval.ms`) for any statement without an `ADD`/`DROP`/`RENAME`/`MODIFY COLUMN` clause, polling up to `ddl.schema.change.timeout.ms` (30 s) for those with (an unqualified ALTER is polled in the session database; a drop and re-add of one column is waited for as the net state, present). 300 `MODIFY COLUMN` statements therefore cost at least 150 s of pure sleep. Ignored statements take none of this (§3.5).
+  - **Detection**: INFO `***** DDL received, Flush all existing records` and `ClickHouse DDL: <stmt>` per statement; lag grows. `clickhouse.sink.ddl` is incremented by the milliseconds each DDL took, measured from before its execution, under the tag `fail=false` on success and `fail=true` on failure (`DebeziumChangeEventCapture.recordDdlMetrics`, `Metrics.updateDdlMetrics`); an ignored DDL records nothing.
   - **Blast radius**: throughput collapse and lag for all tables; no loss.
   - **Recovery**: self-heals when the storm ends. Mitigation: `ignore.ddl.regex` for statements that need not be replicated (no drain for them), `ddl.schema.change.poll.interval.ms` lower.
   - **RTO**: proportional to the storm: >= 0.5 s x statements + ALTER latency; unmeasured.
   - **Test**: GAP: a unit test that feeds N applied DDLs through processEveryChangeRecord with a recording connection and asserts the per-DDL fixed cost (drains, sleeps, metadata queries) stays within a stated bound.
-  - **DEFECT**: the DDL metric `clickhouse.sink.ddl` is recorded only on success, tagged `fail=true`, and incremented by about 0, so neither DDL volume nor DDL failures are observable from metrics.
+  - **Test**: `DdlRetryAndMetricsTest.successfulDdlIsCountedAsNotFailed` and `failedDdlIsCountedAsFailed` pin the metric's tag and duration.
 
-Summary: 4 failure modes, 2 DEFECT, 1 GAP.
+- **FM-06.01-5 An executed ALTER's column change never becomes visible**
+  - **Trigger**: ClickHouse accepted an ALTER (`ADD`/`DROP`/`RENAME`/`MODIFY COLUMN`) but `system.columns` does not show the change within `ddl.schema.change.timeout.ms` (a lagging Keeper-replicated table, a replica that does not apply the entry).
+  - **Behaviour**: `DDLSchemaChangeWaiter.awaitSchemaVisibility()` throws `SchemaVisibilityTimeoutException` (carrying the last polling error, if any) instead of returning as if the schema were ready. `performDDLOperation` treats it as a failed attempt: with `ddl.retry=true` it retries up to `MAX_RETRIES` (the already executed ALTER is not re-run), otherwise it throws `DDLReplicationException`; the offset is not acknowledged and the engine stops, so no DML is written against the missing schema.
+  - **Detection**: WARN `Error polling system.columns for <db>.<table>: ...` while the poll itself fails, then ERROR `Error executing DDL` carrying `Timeout (<n>ms) waiting for the schema change of <db>.<table> to become visible in system.columns ...`; `clickhouse.sink.ddl{fail="true"}` increments.
+  - **Blast radius**: replication stops at the DDL; no loss, the DDL is re-delivered after restart (its statements are replay-safe, spec 06.04 §4).
+  - **Recovery**: check the ALTER on ClickHouse (`SELECT name, type FROM system.columns WHERE database = '<db>' AND table = '<t>'`) and the replicas' replication queue; once the column state matches, restart the connector.
+  - **RTO**: `ddl.schema.change.timeout.ms` (30 s default) to detect, plus the operator's time to repair the replica.
+  - **Test**: `DDLSchemaChangeWaiterFailClosedTest.timeoutFailsClosed`, `renameColumnTimeoutFailsClosed`, `modifyColumnTimeoutFailsClosed`, `renameColumnIfExistsHandlesReplayNoOpAndLiveRename`, `modifyColumnIfExistsHandlesReplayNoOpAndLiveTypeChange`; `DdlRetryAndMetricsTest.invisibleColumnFailsTheDdlClosed`, `visibilityTimeoutRetryDoesNotReExecuteAlter`, `multiStatementRetryDoesNotReExecuteEarlierStatement`.
+
+Summary: 5 failure modes, 1 DEFECT, 1 GAP.

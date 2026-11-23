@@ -76,7 +76,7 @@ re-load into a table that already holds streamed rows cannot repair them (§3.11
 | Override reconciler | none | `sink-connector/python/ch_sink_tools/config/override_reconciler.py` |
 | Override consumer (PostgreSQL only) | none | `sink-connector/python/ch_sink_tools/db_dump/postgres_dumper.py`, `sink-connector/python/ch_sink_tools/db_load/postgres_type_mapper.py` |
 | Programmatic caller | `sink-connector/python/db_load/mysql_resync.py` | `sink-connector/python/ch_sink_tools/db_load/mysql_resync.py` (`loader_command`, `run_loader`) |
-| Unit tests | `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py` (legacy only), `sink-connector/python/db_load/tests/test_loader_failure_modes.py` (both copies) | none |
+| Unit tests | `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py` (legacy only), `sink-connector/python/db_load/tests/test_loader_failure_modes.py` (both copies), `sink-connector/python/db_load/tests/test_loader_d2_fixes.py` (both import names; D-13.04-38..42) | none |
 | Entry points | `sink-connector/python/test_db.sh` (`python db_load/clickhouse_loader.py`) | `ch-mysql-load` in `sink-connector/python/pyproject.toml:49` |
 | Docker image (does not contain the loader) | `sink-connector/python/Dockerfile_db_load` | n/a |
 | Streaming DDL path used for comparison | `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/parser/DataTypeConverter.java`, `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` | |
@@ -145,7 +145,7 @@ setting `module.args` raises `NameError`. The unit tests set it by hand.
 | `--schema_only` | flag | False | Skip the data phase | yes |
 | `--data_only` | flag | False | Skip schema creation. The schema is still re-parsed with `dry_run=True` to build the column map (L645-647). | yes |
 | `--use_regexp_parser` | flag | False | Passed to `convert_to_clickhouse_table`, whose use of it is commented out (L255-256) | no |
-| `--truncate_tables` | flag | False | mysqlshell only: `truncate table <mysql_source_database>.<table>` before loading each table | yes, wrong target (D-13.04-8) |
+| `--truncate_tables` | flag | False | mysqlshell only: ``TRUNCATE TABLE `<clickhouse_database>`.`<table>` `` before loading each table (`truncate_table_statement`; both names backtick-quoted, never the MySQL source schema) | yes (D-13.04-8 fixed, D-13.04-38) |
 | `--dry_run` | flag | False | Schema SQL is not executed and clickhouse-client commands are logged but not run. Database/table creation is skipped. | yes |
 | `--virtual_columns` | list (`nargs='+'`) | `` `_sign` `_version` `is_deleted` `_is_deleted` `` (backticked) | Names excluded from the INSERT column list and the input structure. The match is on the backticked spelling. It applies only to column dicts not marked `source_column`, i.e. the bookkeeping columns the regexp translator lists; a MySQL column from the ANTLR translator is always loaded (§3.7.1). | only for regexp-translated tables |
 | `--mysqlshell` | flag | False | Selects the MySQL Shell layout. Without it the mydumper layout is used. | yes; mydumper mode fails the zstd assertion (D-13.04-14) |
@@ -192,9 +192,10 @@ There are no environment variables. `TZ` is **set** inside every shell command (
   (L511-512/P479-480). This covers chunked (`@0`, `@@N` last chunk), partitioned (`@<partition>@N`) and
   unchunked dumps. `.tsv.gz` or uncompressed `.tsv` dumps match nothing, so zero rows are loaded silently
   (D-13.04-19).
-- If no schema file is found, `load_schema_mysqlshell` logs `Cannot find schema files` and returns `None`.
-  `main` then fails on tuple unpacking with `TypeError: cannot unpack non-iterable NoneType object`
-  (reproduced, D-13.04-19).
+- If no schema file is found, `load_schema_mysqlshell` raises `FileNotFoundError` naming the wildcard it
+  searched (`<dump_dir>/<mysql_source_database>@*.sql`). It used to log `Cannot find schema files` and return
+  `None`, so `main` failed on tuple unpacking with `TypeError: cannot unpack non-iterable NoneType object`
+  (D-13.04-19, fixed by D-13.04-41).
 
 **mydumper layout (no `--mysqlshell`)**:
 
@@ -216,10 +217,10 @@ Glob results are unsorted, in filesystem order, so table and chunk order are not
 2. Credentials (§3.3).
 3. Dependency checks, both of them `assert`s (L637-640/P605-608):
    - `check_program_exists('clickhouse-client')` (runs `/usr/bin/which`).
-   - `assert args.mysqlshell and check_program_exists('zstd')`. This is **false whenever `--mysqlshell` is
-     absent**, so the mydumper mode always stops here with
-     `AssertionError: zstd should be in the PATH for util.dumpSchemas load` (reproduced, D-13.04-14). Under
-     `python -O` both checks disappear.
+   - `zstd` is checked only when `--mysqlshell` is set (`check_dependencies`). The old
+     `assert args.mysqlshell and check_program_exists('zstd')` was false whenever `--mysqlshell` was absent, so
+     the mydumper mode always stopped with `AssertionError: zstd should be in the PATH for util.dumpSchemas load`
+     (D-13.04-14, fixed by D-13.04-39). Under `python -O` both checks still disappear.
 4. If not `--data_only`: `load_schema(dry_run=--dry_run, datetime_timezone=--clickhouse_datetime_timezone)`
    returns `(unix_tz, schema_map)`.
 5. If not `--schema_only`: if the schema phase was skipped, `load_schema(..., dry_run=True)` re-parses the
@@ -273,9 +274,10 @@ Per schema file (glob order), the main thread:
    `get_column_list(transform=False)` and `transformed_columns` =
    `get_column_list(transform=True, mysqlshell=True, decode_columns=..., binary_handling_mode=..., persist_raw_bytes=...)`;
 2. with `--truncate_tables` and not `--dry_run`, opens a new driver connection and executes
-   `truncate table <schema>.<table_name>`, where `<schema>` is the **source** schema parsed from the file name
-   (L518-521/P486-489; reproduced `truncate table mydb.t1` while the target was `mydb_ch`). This is
-   D-13.04-8.
+   ``TRUNCATE TABLE `<clickhouse_database>`.`<table_name>` `` (`truncate_table_statement`). It used to execute
+   `truncate table <schema>.<table_name>` with the **source** schema parsed from the file name, which emptied
+   the wrong ClickHouse database when the source and target names differed (reproduced `truncate table mydb.t1`
+   while the target was `mydb_ch`). D-13.04-8, fixed by D-13.04-38.
 3. For every data file it builds the input structure. For each column of `schema_map[db.table]` that is not
    filtered out (filter in §3.7.1), it adds `` \`name\` <type> ``. `<type>` is `Nullable(<translated type>)`
    or `<translated type>` when the **MySQL** type contains `timestamp`. Every other column gets
@@ -409,10 +411,11 @@ ambient zone of the load (`TZ`, `use_client_time_zone`) — §3.9.
   earlier tables' chunks may still be loading.
 - No lock and no shared state exist, except the module-level `_REGISTERED_SECRETS` set (legacy). It is
   written in the main thread before any task starts.
-- Errors: after every submission, `for f in as_completed(futures): if f.exception(): raise f.exception()`.
-  The first failure in **completion** order is raised. Leaving the `with` block calls `shutdown(wait=True)`,
-  so every other queued or running chunk still runs to completion. Then the exception propagates and the
-  process exits 1 with a traceback. Reproduced: chunk `@@1` failed, and all 3 commands were still executed.
+- Errors: after every submission, `wait_for_loads(futures)` iterates `as_completed`; on the first failure (in
+  **completion** order) it calls `cancel()` on every future and raises that exception. Loads still queued never
+  start; loads already running finish when the `with` block calls `shutdown(wait=True)`. Then the exception
+  propagates and the process exits 1 with a traceback. Before D-13.04-42 every queued chunk still ran to
+  completion before the error surfaced (chunk `@@1` failed, and all 3 commands were still executed).
   Chunks already loaded stay loaded (FM-11.05-6). There is no retry, rollback, or per-table status.
 
 ### 3.8 Data phase, mydumper layout (`load_data`, L408-441 / P409-441)
@@ -424,7 +427,7 @@ ambient zone of the load (`TZ`, `use_client_time_zone`) — §3.9.
    `print`, then for each `.dat.gz` file:
 
 ```
-export TZ=<unix_tz>; gunzip --stdout <data_file>  | sed -e 's/\\"/""/g' | sed -e "s/\\\'/'/g" | clickhouse-client <--config-file F> \
+export TZ=<unix_tz>; gunzip --stdout <data_file>  | <python> -c '<mydumper escape filter>' | clickhouse-client <--config-file F> \
   --use_client_time_zone 1 -h <host> --port <port> <--secure> \
   --query="INSERT INTO <clickhouse_database>.<table>(<columns>)  SELECT <transformed_columns> FROM input('<structure>') FORMAT CSV" \
   -u<user> <--password ...> -mn
@@ -980,7 +983,7 @@ This is D-13.04-26.
 | INV-13.04-5 | Every source row in the dump is loaded, or the loader exits non-zero. | **Violated** only by chunk files the glob does not find and the absent count check (D-13.04-19). D-13.04-4/5/6 are fixed. |
 | INV-13.04-6 | A failed chunk makes the run fail (non-zero exit). | **Holds** (clickhouse-client, decompressor and `sed` failures, §3.10) |
 | INV-13.04-7 | Generated columns are not inserted. | **Holds** (§3.7.1) |
-| INV-13.04-8 | The loader writes only to `--clickhouse_database`. | **Violated** by `--truncate_tables` (D-13.04-8) and by the mydumper `CREATE DATABASE` (D-13.04-20) |
+| INV-13.04-8 | The loader writes only to `--clickhouse_database`. | **Holds** for `--truncate_tables` since D-13.04-38 (`tests/test_loader_d2_fixes.py::TestTruncateTargetsClickHouseDatabase`). **Violated** by the mydumper `CREATE DATABASE` (D-13.04-20) |
 | INV-13.04-9 | Credentials appear neither in logs nor on process argv. | **Violated** (D-13.04-11/12/13) |
 | INV-13.04-10 | The translation is deterministic (same dump gives same DDL and same load). | **Holds** for DDL and the time zone (D-13.04-2 fixed). Load order is glob order. |
 
@@ -992,6 +995,10 @@ This is D-13.04-26.
 
 Run from `sink-connector/python` with the toolset venv Python:
 
+- D-13.04-38..42 suites: `pytest -q -p no:cacheprovider db_load/tests/test_loader_d2_fixes.py` covers the
+  `--truncate_tables` target, the `zstd` check, the mydumper escape filter (run through the shell), the empty-dump
+  error and the first-failure cancellation, against both import names. With `test_mysql_resync_d2.py`,
+  `test_mysql_resync.py` and `db_dump/tests` it gave **258 passed**.
 - Loader suites: `pytest -q -p no:cacheprovider db_load/tests/test_clickhouse_loader_unit.py db_load/tests/test_loader_failure_modes.py`
   gave **22 passed, 2 skipped**. The skips are the declared defects FM-11.05-1 and FM-11.05-2.
 - Full offline baseline (`db_compare/tests db_load/tests db_dump/tests tests`): **227 passed, 5 skipped** on
@@ -1123,7 +1130,8 @@ writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the lo
 4. A data pipeline whose decompressor fails makes the loader exit non-zero (`set -o pipefail` or equivalent).
    **Covered**. An empty chunk is refused unless the dump metadata says the chunk is empty: GAP (D-13.04-19).
 5. The mydumper data glob is independent of `-` in `--dump_dir`. **Covered**.
-6. `--truncate_tables` targets `--clickhouse_database`.
+6. `--truncate_tables` targets `--clickhouse_database`, with both names backtick-quoted. **Covered**
+   (`sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestTruncateTargetsClickHouseDatabase`, D-13.04-38).
 7. Generated columns are emitted as `DEFAULT (expr)`, matching Spec 06.06. **Covered** (D-13.04-33, §5.1), with
    the expression translated rather than copied.
 8. The type mapping in §3.15 equals the streaming DDL path's mapping for every row marked as divergent.
@@ -1294,7 +1302,7 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
 
 - **FM-13.04-12 One chunk fails to load**
   - **Trigger**: clickhouse-client returns non-zero (parse error, server down, too many partitions).
-  - **Behaviour**: `execute_load` raises. `as_completed` re-raises the first failure after `shutdown(wait=True)` has let every other submitted chunk finish (`clickhouse_loader.py:552-554`, P520-522). Reproduced: 3 of 3 commands ran and the exit code was 1. Partial data remains, with no retry or cleanup (FM-11.05-6).
+  - **Behaviour**: `execute_load` raises. `wait_for_loads` re-raises the first failure and cancels every chunk that has not started (D-13.04-42; running chunks finish at `shutdown(wait=True)`). Before the fix 3 of 3 commands ran after the failure. The exit code is 1. Partial data remains, with no retry or cleanup (FM-11.05-6).
   - **Detection**: non-zero exit and a traceback with `command ... failed`.
   - **Blast radius**: the failed table is partial. Other tables in the run are complete or partial.
   - **Recovery**: fix the cause, truncate the affected target tables, and re-run `--data_only`. Snapshot rows tie at version 0, so a re-run without truncation is idempotent in content but doubles parts until merged.
@@ -1514,3 +1522,8 @@ Summary: 28 failure modes, 16 DEFECT, 17 GAP (FM-13.04-9 fixed by D-13.04-33; FM
 | D-13.04-35 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `time_text_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | observed on a real replica: one TIME column held 2.69 M rows `01:15:00` from the initial load and 97 K rows `01:15:00.000000` streamed afterwards, and the snapshot verified by the job driver reported every row of such a table DIFFERENT; offline the loader stored the MySQL Shell text unchanged | FIXED: a TIME field of the dump is written into its String column as the connector's `MicroTimeConverter.convert` formats it (`[-]HH:MM:SS.ffffff`, six fraction digits, sign kept, hours unbounded): the fraction is padded to six digits, NULL stays NULL, a non-String target is left alone (§3.7.1). The checksum tools and the connector are unchanged. Tests: `test_loader_time_text.py` (both copies, the loader's INSERT in `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values[ledger]`, `::test_production_job_matches_the_loaded_snapshot`. Was: the dump text (`01:15:00`, `12:00:00.500`) was stored as is. |
 | D-13.04-36 | S3 | both | `ch_sink_tools/db/checksum_common.py` (`get_unix_timezone_from_mysql_timezone`); `db_load/clickhouse_loader.py` (`load_schema`, `load_schema_mysqlshell`, `main`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | code-read: the undeterminable branch logged a WARNING and returned `UTC`, so a dump with no recorded zone loaded `TIMESTAMP` as UTC whatever the source server stored | FIXED: no implicit zone. A recorded zone is used and must match `--source_timezone` when one is given; an undeterminable zone is refused before any DDL unless `--source_timezone` names it (FM-13.04-27, §3.9). Tests: `test_loader_dump_zone_refusal.py`, `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: `UTC` fallback. |
 | D-13.04-37 | S1 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell` structure build, `timestamp_input_datatype`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced with `clickhouse local` on the UTC text `2018-04-05 20:44:35.772929` (April) and `2018-12-01 00:18:03.545683` (December): the zone-less declaration `\`ts\`  Nullable( DateTime64(6))` stores `1522961075772929`/`1543623483545683` under `TZ=UTC`, `1522957475772929`/`1543623483545683` under `TZ=Europe/London` (April one hour early, December exact) and `1522979075772929`/`1543645083545683` under `TZ=America/Chicago` (five and six hours late); the pinned `DateTime64(6, 'UTC')` stores `1522961075772929`/`1543623483545683` under all three | FIXED: a `TIMESTAMP` field is declared with the zone the loader resolved from the dump or `--source_timezone` (`DateTime64(p, '<zone>')`), so the parsed instant no longer follows the ambient zone of the load; a declaration that already names a zone (`--clickhouse_datetime_timezone`) is kept. Test `test_loader_timestamp_input_zone.py` (structure + `clickhouse local` values under three ambient zones; mutation-checked — the fix reverted makes 5 of its 17 tests fail). Was: zone-less `DateTime64(p)`, so every `TIMESTAMP` of a load followed the load's ambient zone (FM-13.04-41). |
+| D-13.04-38 | S1 | both | `ch_sink_tools/db_load/clickhouse_loader.py` (`load_data_mysqlshell`, `truncate_table_statement`); same through `db_load/clickhouse_loader.py` | reproduced offline (`truncate table <mysql source schema>.<table>` with a differently named target database) | FIXED: `--truncate_tables` runs ``TRUNCATE TABLE `<clickhouse_database>`.`<table>` `` and never names the MySQL source schema. Tests: `sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestTruncateTargetsClickHouseDatabase`. |
+| D-13.04-39 | S2 | both | `ch_sink_tools/db_load/clickhouse_loader.py` (`check_dependencies`) | reproduced offline (`assert args.mysqlshell and check_program_exists('zstd')` is false for every mydumper run) | FIXED: `zstd` is required only with `--mysqlshell`. Tests: `sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestCheckDependencies`. |
+| D-13.04-40 | S1 | both | `ch_sink_tools/db_load/clickhouse_loader.py` (`mydumper_csv_unescape_filter`, `load_data`) | reproduced offline (a field ending in an escaped backslash, then the closing quote, was rewritten by the old `sed` into a doubled quote) | FIXED: the mydumper escapes are read as backslash pairs from left to right, so an escaped backslash followed by a quote keeps its closing quote; an escaped quote becomes a doubled quote and an escaped apostrophe becomes an apostrophe only when its backslash is not itself escaped. Tests: `sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestMydumperCsvUnescape`. |
+| D-13.04-41 | S3 | both | `ch_sink_tools/db_load/clickhouse_loader.py` (`load_schema_mysqlshell`) | reproduced offline (empty dump directory: `TypeError: cannot unpack non-iterable NoneType object`) | FIXED: raises `FileNotFoundError` naming the searched wildcard. Tests: `sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestNoSchemaFiles`. |
+| D-13.04-42 | S3 | both | `ch_sink_tools/db_load/clickhouse_loader.py` (`wait_for_loads`, `load_data_mysqlshell`) | reproduced offline (all queued chunks still ran after the first failure) | FIXED: the first failure cancels every queued load and is raised at once; running loads finish. Tests: `sink-connector/python/db_load/tests/test_loader_d2_fixes.py::TestWaitForLoads`. |

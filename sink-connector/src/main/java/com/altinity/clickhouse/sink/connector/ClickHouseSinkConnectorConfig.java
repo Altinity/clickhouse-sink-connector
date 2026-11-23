@@ -177,9 +177,12 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_ERRORS_MAX_RETRIES = 10;
 
     /**
-     * Default error table name.
+     * Default error table name: the table {@code ErrorLogger} writes failed records and DDL to.
+     * It was once the unused literal {@code error_table}, and the {@code default.error.table}
+     * definition used its own KEY as the default, so an unset key resolved to the string
+     * {@code default.error.table}.
      */
-    private static final String DEFAULT_ERROR_TABLE = "error_table";
+    static final String DEFAULT_ERROR_TABLE = "replica_source_error";
 
     /**
      * Order index for config definitions, used for grouping/ordering.
@@ -1101,7 +1104,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ERROR_TABLE_NAME.toString(),
                         Type.STRING,
-                        ERROR_TABLE_NAME.toString(),
+                        DEFAULT_ERROR_TABLE,
                         Importance.LOW,
                         "Default table name for storing error records",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

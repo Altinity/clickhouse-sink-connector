@@ -465,7 +465,7 @@ class TestMySQLColumnClassification(unittest.TestCase):
         ]
         select = build_mysql_select(columns, include_json_columns=True)
         self.assertNotIn("`f`", select, "floating point stays skipped")
-        self.assertIn("replace(to_base64(cast(`b` as binary)),'\\n','')", select,
+        self.assertIn("replace(to_base64(cast(`b` as binary)),char(10 using ascii),'')", select,
                       "a blob renders as base64 under the default encoding")
         self.assertIn("json_pretty(`j`)", select)
         self.assertIn("cast(`t` as time(6))", select)
@@ -1110,13 +1110,13 @@ class TestBinaryEncoding(unittest.TestCase):
     def test_mysql_renders_base64_by_default_hex_on_request_and_hex_in_raw_mode(self):
         column = [mysql_column("b", "varbinary", "varbinary(16)")]
         self.assertEqual(build_mysql_select(column),
-                         my_piece("replace(to_base64(cast(`b` as binary)),'\\n','')") + mysql_flags("b"))
+                         my_piece("replace(to_base64(cast(`b` as binary)),char(10 using ascii),'')") + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="raw"),
                          my_piece("lower(hex(cast(`b` as binary)))") + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="hex"),
                          my_piece("lower(hex(cast(`b` as binary)))") + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="base64"),
-                         my_piece("replace(to_base64(cast(`b` as binary)),'\\n','')") + mysql_flags("b"))
+                         my_piece("replace(to_base64(cast(`b` as binary)),char(10 using ascii),'')") + mysql_flags("b"))
 
     def test_default_matches_the_connector_default(self):
         """The default is base64 in both parsers, the connector's own default

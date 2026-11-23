@@ -474,5 +474,166 @@ theorem unseeded_restart_inverts :
     v2 < v1 := by
   decide
 
+/-!
+## Both version domains (spec 02.01 §3.1.2, spec 02.02 §3.5.1)
+
+A GTID row is versioned `SnowFlakeId.generate(versionTs, gtid)`: the timestamp
+(relative to the snowflake epoch) times `2^22` plus the LOW 22 bits of the GTID
+transaction number (`sfm`). A row without a GTID is versioned by the sequence of
+the section above. The Java sequence keeps the final version of every first
+delivery above the highest final version before it:
+
+* a GTID row's timestamp field is moved to `bumpTs`, the least timestamp at or
+  above its own whose snowflake reaches the floor (`bumpTs_ge`, `bumpTs_reaches`,
+  `bumpTs_least`); it then strictly exceeds a predecessor of another transaction
+  (`bumpTs_strict_of_new_low`) and ties with a row of its own transaction without
+  moving (`same_transaction_no_bump`);
+* a row without a GTID is carried above the floor (`carry_gt`);
+* the Kafka Connect fallback composes the offset without truncation
+  (`compose_strict_mono`, `compose_eq_sfm`);
+* a durable mark `H` in the snowflake domain bounds the timestamp of every GTID
+  version it covers (`below_snowflake_floor`) and the seeded slot lies above all of
+  them (`above_snowflake_floor`).
+
+The executable examples are the reproduction scenarios: the pre-fix inversions
+(`masked_wrap_inverts`, `uuid_change_inverts`) and the fixed orderings
+(`wrap_example`, `uuid_change_example`).
+-/
+namespace Domains
+
+/-- One millisecond of the snowflake timestamp field, `2^22` (`SnowFlakeId.MILLISECOND`). -/
+def W : Nat := 4194304
+
+/-- `SnowFlakeId.generate` for a timestamp `t` relative to the epoch: only the low
+    22 bits of the discriminator are kept. -/
+def sfm (t g : Nat) : Nat := t * W + g % W
+
+/-- `SnowFlakeId.compose`: the discriminator is NOT truncated. -/
+def compose (t d : Nat) : Nat := t * W + d
+
+/-- The least `n` with `n * W + g % W ≥ floor` when `floor > g % W`. -/
+def need (floor g : Nat) : Nat := (floor - g % W - 1) / W + 1
+
+/-- `SnowFlakeId.timestampReaching(t0, g, floor)`. -/
+def bumpTs (t0 floor g : Nat) : Nat :=
+  if floor ≤ g % W then t0 else if need floor g ≤ t0 then t0 else need floor g
+
+/-- The anonymous carry: a sequence value at or below the floor becomes `floor + 1`. -/
+def carry (v floor : Nat) : Nat := if v ≤ floor then floor + 1 else v
+
+theorem compose_eq_sfm (t d : Nat) (h : d < W) : compose t d = sfm t d := by
+  simp only [compose, sfm, Nat.mod_eq_of_lt h]
+
+/-- Kafka Connect fallback (spec 02.01 §3.1 path 4): a later record of one
+    partition -- timestamp not lower, offset strictly higher -- ranks strictly
+    higher, across every multiple of `2^22`. -/
+theorem compose_strict_mono (t1 t2 d1 d2 : Nat) (ht : t1 ≤ t2) (hd : d1 < d2) :
+    compose t1 d1 < compose t2 d2 := by
+  simp only [compose, W]
+  omega
+
+theorem bumpTs_ge (t0 floor g : Nat) : t0 ≤ bumpTs t0 floor g := by
+  unfold bumpTs
+  split
+  · exact Nat.le_refl _
+  · split
+    · exact Nat.le_refl _
+    · omega
+
+theorem bumpTs_reaches (t0 floor g : Nat) : floor ≤ sfm (bumpTs t0 floor g) g := by
+  simp only [bumpTs, sfm, need, W]
+  split
+  · omega
+  · split <;> omega
+
+theorem bumpTs_least (t0 floor g t : Nat) (h0 : t0 ≤ t) (hf : floor ≤ sfm t g) :
+    bumpTs t0 floor g ≤ t := by
+  simp only [bumpTs, sfm, need, W] at *
+  split
+  · exact h0
+  · split
+    · exact h0
+    · omega
+
+/-- A GTID row of another transaction (different low bits) never ties with the
+    predecessor whose version is the floor: it strictly exceeds it. -/
+theorem bumpTs_strict_of_new_low (t0 t1 g1 g : Nat) (hg : g % W ≠ g1 % W) :
+    sfm t1 g1 < sfm (bumpTs t0 (sfm t1 g1) g) g := by
+  have h := bumpTs_reaches t0 (sfm t1 g1) g
+  revert h
+  generalize bumpTs t0 (sfm t1 g1) g = b
+  intro h
+  simp only [sfm, W] at *
+  omega
+
+/-- The rows of one transaction in one millisecond share their version: the
+    floor set by the first row does not move the second (spec 02.01 §3.1.1). -/
+theorem same_transaction_no_bump (t1 g : Nat) : bumpTs t1 (sfm t1 g) g = t1 := by
+  simp only [bumpTs, need, sfm, W]
+  split
+  · rfl
+  · split
+    · rfl
+    · omega
+
+theorem carry_gt (v floor : Nat) : floor < carry v floor := by
+  unfold carry
+  split <;> omega
+
+theorem carry_ge (v floor : Nat) : v ≤ carry v floor := by
+  unfold carry
+  split <;> omega
+
+/-- Every snowflake version at or below a mark `H` has its timestamp below
+    `H / W + 1` (`SnowFlakeId.floorAbove`). -/
+theorem below_snowflake_floor (t g H : Nat) (h : sfm t g ≤ H) : t < H / W + 1 := by
+  simp only [sfm, W] at *
+  omega
+
+/-- A GTID version at the seeded slot `H / W + 1` exceeds the mark, whatever its
+    transaction number. -/
+theorem above_snowflake_floor (H g : Nat) : H < sfm (H / W + 1) g := by
+  simp only [sfm, W]
+  omega
+
+/-- Pre-fix: inside one millisecond, transaction `2^22` ranked below `2^22 - 1`. -/
+theorem masked_wrap_inverts : sfm 5000 W < sfm 5000 (W - 1) := by
+  decide
+
+/-- Pre-fix: the new primary's transaction 7, clamped into the old primary's
+    millisecond, ranked below the replicated transaction 900000. -/
+theorem uuid_change_inverts : sfm 5000 7 < sfm 5000 900000 := by
+  decide
+
+/-- Fixed: the wrapped transaction moves one millisecond and ranks above. -/
+theorem wrap_example :
+    let before := sfm 5000 (W - 1)
+    let ts := bumpTs 5000 (before + 1) W
+    ts = 5001 ∧ before < sfm ts W := by
+  decide
+
+/-- Fixed: the new primary's first transaction moves one millisecond and ranks above. -/
+theorem uuid_change_example :
+    let before := sfm 5000 900000
+    let ts := bumpTs 5000 (before + 1) 7
+    ts = 5001 ∧ before < sfm ts 7 := by
+  decide
+
+/-- FM-02.02-6: inside one engine run a position in a lower-numbered file of the
+    same log is a log that restarted lower (failover, `RESET MASTER`) and is a first
+    delivery; an earlier position in the same file is still a redelivery. Positions
+    are `(file sequence, byte position)`. -/
+def isFirstInRun (mark p : Nat × Nat) : Bool :=
+  decide (p.1 < mark.1) || decide (mark.1 < p.1) || (decide (p.1 = mark.1) && decide (mark.2 < p.2))
+
+theorem lower_file_is_first (mark p : Nat × Nat) (h : p.1 < mark.1) : isFirstInRun mark p = true := by
+  simp [isFirstInRun, h]
+
+theorem same_file_earlier_is_redelivery (mark p : Nat × Nat) (hf : p.1 = mark.1) (hp : p.2 ≤ mark.2) :
+    isFirstInRun mark p = false := by
+  simp [isFirstInRun, hf, Nat.not_lt.mpr hp]
+
+end Domains
+
 end VersionFloor
 end Replication

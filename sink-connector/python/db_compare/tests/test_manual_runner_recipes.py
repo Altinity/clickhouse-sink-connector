@@ -242,6 +242,11 @@ class TestClickHouseCount(unittest.TestCase):
             if "from system.parts" in sql:
                 # what the server returns for match(partition,'None') or for 'p.*'
                 return ([("202609",), ("202610",)], 2) if overrides.get("include_partitions_regex") else ([], 0)
+            if "from system.columns" in sql:
+                # (name, type, 0, 0, is_in_partition_key, is_in_sorting_key): dt is in both keys
+                return ([("dt", "Date", 0, 0, 1, 1)], 1)
+            if "engine_full" in sql:
+                return ([("ReplacingMergeTree(_version, is_deleted) ORDER BY dt",)], 1)
             if "from system.tables" in sql:
                 return ([("toYYYYMM(dt)",)], 1)
             if "'202609'" in sql:

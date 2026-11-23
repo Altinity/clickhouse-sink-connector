@@ -60,7 +60,7 @@ public class ClickHouseAutoCreateTableHistoryDdlTest {
         Assert.assertTrue(ddl, ddl.contains("`_operation` LowCardinality(String)"));
         Assert.assertTrue(ddl, ddl.contains("PARTITION BY toDate(`_valid_to`)"));
         // The sorting key is (k, _valid_to): what makes the table an SCD2 table.
-        Assert.assertTrue(ddl, ddl.contains("ORDER BY(id,`_valid_to`)"));
+        Assert.assertTrue(ddl, ddl.contains("ORDER BY(`id`,`_valid_to`)"));
         Assert.assertTrue(ddl, ddl.contains("TTL `_valid_to` + toIntervalDay(7)"));
         Assert.assertFalse(ddl, ddl.contains("toIntervalDay(30)"));
     }
@@ -91,6 +91,6 @@ public class ClickHouseAutoCreateTableHistoryDdlTest {
         Assert.assertFalse(ddl, ddl.contains("_operation"));
         Assert.assertFalse(ddl, ddl.contains("PARTITION BY"));
         Assert.assertFalse(ddl, ddl.contains(" TTL "));
-        Assert.assertTrue(ddl, ddl.contains("ORDER BY(id)"));
+        Assert.assertTrue(ddl, ddl.contains("ORDER BY(`id`)"));
     }
 }

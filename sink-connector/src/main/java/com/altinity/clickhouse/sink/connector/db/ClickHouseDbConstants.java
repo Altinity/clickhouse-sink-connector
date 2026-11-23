@@ -25,9 +25,11 @@ public class ClickHouseDbConstants {
 
     /**
      * Fragment used to delete a column in an ALTER TABLE
-     * statement.
+     * statement. ClickHouse spells it {@code DROP COLUMN}; the earlier
+     * {@code delete column} text was a syntax error.
+     * DESTRUCTIVE: only ClickHouseAlterTable.createAlterTableSyntax(REMOVE) emits it; no connector code path calls that operation, the schema-evolution path only adds columns.
      */
-    public static final String ALTER_TABLE_DELETE_COLUMN = "delete column";
+    public static final String ALTER_TABLE_DELETE_COLUMN = "drop column";
 
     /**
      * The CREATE TABLE statement keyword.

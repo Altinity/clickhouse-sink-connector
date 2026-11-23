@@ -3,6 +3,12 @@ package com.altinity.clickhouse.debezium.embedded.config;
 import com.altinity.clickhouse.debezium.embedded.converters.Latin1TextConverter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import io.debezium.config.Field;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,7 +68,11 @@ public class ConfigKeyCheckTest {
             "DebeziumChangeEventCapture#propKey",
             List.of("offset.storage.jdbc.url", "schema.history.internal.jdbc.url"),
             "DebeziumOffsetStorage#key",
-            List.of("offset.storage.jdbc.table.ddl", "offset.storage.jdbc.offset.table.ddl"));
+            List.of("offset.storage.jdbc.table.ddl", "offset.storage.jdbc.offset.table.ddl"),
+            "TableFilterConfig#includeKey",
+            List.of("table.include.list"),
+            "TableFilterConfig#excludeKey",
+            List.of("table.exclude.list"));
 
     /**
      * Classes whose constants the scanner resolves by reflection, keyed by simple name: the Debezium configuration
@@ -652,5 +662,95 @@ public class ConfigKeyCheckTest {
     public void ignoredReasonNamesTheReplacement() {
         ConfigKeyCheck.Finding f = only(props("schema.history.internal.table.ddl", "x"));
         Assertions.assertTrue(f.detail().contains("schema.history.internal.jdbc.table.ddl"), f.detail());
+    }
+
+    /** Collects what ConfigKeyCheck logs while one test runs. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = java.util.Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-config-key-check", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        List<LogEvent> at(Level level) {
+            List<LogEvent> out = new ArrayList<>();
+            synchronized (events) {
+                for (LogEvent e : events) {
+                    if (e.getLevel() == level) {
+                        out.add(e);
+                    }
+                }
+            }
+            return out;
+        }
+    }
+
+    /** Runs {@code body} with a DEBUG-level capture on ConfigKeyCheck's logger, restoring the level after. */
+    private static CapturingAppender capturing(Runnable body) {
+        org.apache.logging.log4j.core.Logger logger =
+                (org.apache.logging.log4j.core.Logger) LogManager.getLogger(ConfigKeyCheck.class);
+        Level previous = logger.getLevel();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        Configurator.setLevel(ConfigKeyCheck.class.getName(), Level.DEBUG);
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.removeAppender(appender);
+            appender.stop();
+            Configurator.setLevel(ConfigKeyCheck.class.getName(), previous);
+        }
+        return appender;
+    }
+
+    @Test
+    @DisplayName("a missing optional connector class (MongoDB on a MySQL deployment) is logged at DEBUG, not WARN")
+    public void missingOptionalConnectorIsDebugNotWarn() {
+        CapturingAppender log = capturing(() -> ConfigKeyCheck.logSourceUnavailable(
+                "io.debezium.connector.mongodb.MongoDbConnectorConfig",
+                new ClassNotFoundException("io.debezium.connector.mongodb.MongoDbConnectorConfig")));
+
+        Assertions.assertTrue(log.at(Level.WARN).isEmpty(), "no WARN for an absent optional connector: " + log.events);
+        Assertions.assertEquals(1, log.at(Level.DEBUG).size(), log.events.toString());
+    }
+
+    @Test
+    @DisplayName("a NoClassDefFoundError of an optional connector is also DEBUG")
+    public void missingOptionalConnectorDependencyIsDebugNotWarn() {
+        CapturingAppender log = capturing(() -> ConfigKeyCheck.logSourceUnavailable(
+                "io.debezium.connector.mongodb.MongoDbConnectorConfig",
+                new NoClassDefFoundError("com/mongodb/MongoClientSettings")));
+
+        Assertions.assertTrue(log.at(Level.WARN).isEmpty(), log.events.toString());
+    }
+
+    @Test
+    @DisplayName("a core source that cannot be read, or an optional source failing for another reason, stays a WARN")
+    public void realFailuresStayWarnings() {
+        CapturingAppender log = capturing(() -> {
+            ConfigKeyCheck.logSourceUnavailable("io.debezium.embedded.EmbeddedEngineConfig",
+                    new ClassNotFoundException("io.debezium.embedded.EmbeddedEngineConfig"));
+            ConfigKeyCheck.logSourceUnavailable("io.debezium.connector.mongodb.MongoDbConnectorConfig",
+                    new IllegalStateException("broken static initializer"));
+        });
+
+        Assertions.assertEquals(2, log.at(Level.WARN).size(), log.events.toString());
+    }
+
+    @Test
+    @DisplayName("the known-key scan of a MySQL deployment logs no WARN about the MongoDB connector class")
+    public void knownKeysLogNoMongoWarning() {
+        CapturingAppender log = capturing(ConfigKeyCheck::knownKeys);
+
+        for (LogEvent warning : log.at(Level.WARN)) {
+            Assertions.assertFalse(warning.getMessage().getFormattedMessage().contains("MongoDbConnectorConfig"),
+                    "spurious MongoDB WARN on startup: " + warning.getMessage().getFormattedMessage());
+        }
     }
 }

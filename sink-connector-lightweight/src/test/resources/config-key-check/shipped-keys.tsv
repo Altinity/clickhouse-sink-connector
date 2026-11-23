@@ -5,7 +5,7 @@
 # Under strict mode (config.keys.strict=true) the UNKNOWN and RENAMED rows refuse the start; RENAMED_IGNORED and IGNORED rows do not.
 file	key	expected
 docker/config-2.yml	database.server.name	RENAMED_IGNORED
-docker/config.yml	database.server.name	RENAMED_IGNORED
+docker/config.yml	topic.prefix	OK
 docker/config_keepermap_storage.yml	database.server.name	RENAMED
 docker/config_local.yml	database.server.name	RENAMED
 docker/config_oracle.yml	database.connection.adapter	UNKNOWN
@@ -17,7 +17,7 @@ docker/config_oracle.yml	database.pdb.name	UNKNOWN
 docker/config_oracle.yml	database.server.name	RENAMED
 docker/config_postgres.yml	database.server.name	RENAMED
 docker/config_postgres_local.yml	database.server.name	RENAMED
-k8s/config.yml	database.server.name	RENAMED_IGNORED
+k8s/config.yml	topic.prefix	OK
 src/main/resources/config.properties	converter.schemas.enable	IGNORED
 src/main/resources/config.properties	database.server.name	RENAMED_IGNORED
 src/main/resources/config.properties	schema.history.internal.table.ddl	IGNORED

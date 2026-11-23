@@ -550,7 +550,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterAddColumnWithColumnKeyword() {
 
         String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
-        String clickhouseExpectedQuery = "ALTER TABLE `employees`.table1 ADD COLUMN IF NOT EXISTS entity Nullable(String)";
+        // The explicit qualifier db1 wins over the session database (NEW-J1).
+        String clickhouseExpectedQuery = "ALTER TABLE `db1`.table1 ADD COLUMN IF NOT EXISTS entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -720,7 +721,7 @@ public class MySqlDDLParserListenerImplTest {
         String mysqlQuery2 = "ALTER TABLE server_team_replicate.test ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT 0 AFTER lglent_group;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery2, "server_team_replicate", clickHouseQuery2);
-        String expectedQuery = "ALTER TABLE `employees`.test ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0 AFTER lglent_group";
+        String expectedQuery = "ALTER TABLE `server_team_replicate`.test ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0 AFTER lglent_group";
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(expectedQuery));
         log.info("CLICKHOUSE QUERY: " + clickHouseQuery2);
 
@@ -783,8 +784,8 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN IF EXISTS last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
-        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE `employees`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN IF EXISTS col1 Nullable(String) \n" +
-                "ALTER TABLE `employees`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN IF EXISTS col1 to new_col"));
+        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE `database_1`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN IF EXISTS col1 Nullable(String) \n" +
+                "ALTER TABLE `database_1`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN IF EXISTS col1 to new_col"));
     }
 
     @Test
@@ -1033,13 +1034,13 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "truncate table `mydb`.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        // When the table name is already qualified (mydb.add_test), the method should
-        // strip the source database and use the configured databaseName instead,
-        // producing employees.add_test (not employees.mydb.add_test).
+        // When the table name is already qualified (mydb.add_test), the explicit
+        // database wins over the session database (employees): the statement
+        // truncates mydb.add_test, never employees.add_test (NEW-J1).
         // DESTRUCTIVE: none -- the DDL translator is a pure string
         // transformation here; the test asserts on generated text and
         // never opens a connection, so nothing is truncated.
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE `employees`.add_test"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE `mydb`.add_test"));
     }
 
     @Test
@@ -1049,8 +1050,9 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table mydb.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
+        // The explicit database wins over the session database (employees) (NEW-J1).
         // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS employees.add_test"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS mydb.add_test"));
     }
 
     @Test
@@ -2964,11 +2966,11 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertEquals("", translate(history, "DROP TABLE IF EXISTS a"));
         Assert.assertEquals(1, history.historyBulkCloses().size());
 
-        // Standard mode: byte-identical to before, and no request.
+        // Standard mode: explicit cross-database qualifier is preserved, and no history request.
         // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
         StringBuffer standardQuery = new StringBuffer();
         mySQLDDLParserService.parseSql("DROP TABLE a, srcdb.b", "", standardQuery, new AtomicBoolean(false));
-        Assert.assertEquals("DROP TABLE if exists employees.a,employees.b", standardQuery.toString());
+        Assert.assertEquals("DROP TABLE if exists employees.a,srcdb.b", standardQuery.toString());
         Assert.assertTrue(mySQLDDLParserService.historyBulkCloses().isEmpty());
     }
 
@@ -4285,11 +4287,11 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    @DisplayName("RENAME TO db2.t2 is re-qualified with the destination database")
+    @DisplayName("RENAME TO db2.t2 keeps its explicit database (NEW-J1)")
     public void testAlterRenameToQualifiedTarget() {
-        Assert.assertEquals("RENAME TABLE IF EXISTS `employees`.t TO `employees`.t2",
+        Assert.assertEquals("RENAME TABLE IF EXISTS `employees`.t TO `db2`.t2",
                 translate("ALTER TABLE t RENAME TO db2.t2"));
-        Assert.assertEquals("RENAME TABLE IF EXISTS `employees`.t TO `employees`.t2",
+        Assert.assertEquals("RENAME TABLE IF EXISTS `db2`.t TO `db2`.t2",
                 translate("ALTER TABLE db2.t RENAME db2.t2"));
     }
 

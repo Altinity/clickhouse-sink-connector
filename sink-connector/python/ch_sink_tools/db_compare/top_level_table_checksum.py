@@ -469,17 +469,28 @@ def replica_database_for(replica_host, mysql_database, database_override_map, lo
     """The ClickHouse database a replica holds ``mysql_database`` in
     (``database_override_map``, §3.4 of spec 13.06)."""
     replica_database = mysql_database
-    if replica_host in database_override_map and mysql_database in database_override_map[replica_host]:
-        override_map = database_override_map[replica_host]
-        database_maps = override_map.split(',')
-        for database_map in database_maps:
-            (source_db, target_db) = database_map.split(':')
-            if source_db == mysql_database:
-                replica_database = target_db
-                break
+    overrides = parse_database_override_map(database_override_map.get(replica_host))
+    # exact key lookup: 'shop' must not select the 'shop_archive:...' entry
+    if mysql_database in overrides:
+        replica_database = overrides[mysql_database]
         if log:
             logging.info(f"Overriding database for host {replica_host} from {mysql_database} to {replica_database}")
     return replica_database
+
+
+def parse_database_override_map(text):
+    """``{source database: replica database}`` from ``src:dst,src2:dst2`` (whitespace
+    around names ignored). Empty or ``None`` gives ``{}``. An entry that is not
+    ``source:target`` raises ValueError naming it."""
+    mapping = {}
+    for entry in str(text or "").split(','):
+        if not entry.strip():
+            continue
+        names = [name.strip() for name in entry.split(':')]
+        if len(names) != 2 or not all(names):
+            raise ValueError(f"Invalid database_override_map entry {entry.strip()!r}: expected <source database>:<replica database>")
+        mapping[names[0]] = names[1]
+    return mapping
 
 
 def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None, source_columns=(), char_columns=()):
@@ -1599,15 +1610,56 @@ def match_table_include_list(database, table, table_include_list):
     full_table_name = f"{database}.{table_name}"
     
     for pattern in table_include_list:
+        pattern = pattern.strip()
+        if not pattern:
+            # a stray comma, not an entry
+            continue
         try:
-            rex = re.compile(pattern.strip())
-            if rex.match(full_table_name):
+            # fullmatch: a pattern names a table, 'shop.orders' is not 'shop.orders_archive'
+            if re.fullmatch(pattern, full_table_name):
                 return True
         except re.error as e:
             logging.error(f"Invalid regex pattern '{pattern}': {e}")
             continue
-    
+
     return False
+
+
+def parse_table_include_list(text):
+    """The entries of the ``table_include_list`` option: ``None`` when the option
+    is absent (every table is checked), otherwise the comma separated entries,
+    each stripped, empty ones dropped. A present but empty option is an empty
+    list, which selects no table (spec 11.02 section 3.2)."""
+    if text is None:
+        return None
+    return [entry.strip() for entry in str(text).split(',') if entry.strip()]
+
+
+def include_list_for_database(include_list, database):
+    """The entries of ``include_list`` that name ``database`` (``<database>.<table pattern>``),
+    ``None`` when there is no include list at all. A list with no entry for
+    ``database`` is an empty list: it selects no table of it, it does not
+    switch the filter off."""
+    if include_list is None:
+        return None
+    return [entry for entry in include_list if entry.startswith(f"{database}.")]
+
+
+def parse_ignored_columns(entries):
+    """``{database: {table: {column: True}}}`` from ``<database>.<table>.<column>`` entries.
+
+    An entry that does not have exactly three dot separated parts raises
+    ValueError naming it; a short one used to raise IndexError, and a longer one
+    (a column name with a dot) was dropped without a word."""
+    ignored = {}
+    for entry in entries or []:
+        parts = str(entry).strip().split('.')
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(f"Invalid ignored_columns entry {entry!r}: expected <database>.<table>.<column>")
+        (db, table, col) = parts
+        ignored.setdefault(db, {}).setdefault(table, {})[col] = True
+    return ignored
+
 
 def run_config(config):
     """Display the parsed configuration."""
@@ -1621,7 +1673,7 @@ def run_config(config):
     mysql_table_include_list = None
     
     if "table_include_list" in  config['source']['mysql']:
-            mysql_table_include_list = config['source']['mysql']['table_include_list'].split(',')
+            mysql_table_include_list = parse_table_include_list(config['source']['mysql']['table_include_list'])
     
     for i, replica in enumerate(config['replicas']):
         replica_hosts.append(replica['clickhouse']['host'])
@@ -1647,19 +1699,9 @@ def run_config(config):
         databases = [database]  
     
     ignored_columns = config['source']['mysql']['ignored_columns'] if 'ignored_columns' in config['source']['mysql'] else []
-    ignored_columns_map = {}
     for ignored_column in ignored_columns:
         logging.info(f"Ignoring column {ignored_column}")
-        ignored_columns_split = ignored_column.split('.')  
-        db = ignored_columns_split[0]
-        table = ignored_columns_split[1]
-        col = ignored_columns_split[2]
-        if len(ignored_columns_split) == 3:
-            if db not in ignored_columns_map:
-                ignored_columns_map[db] = {}
-            if table not in ignored_columns_map[db]:
-                ignored_columns_map[db][table] = {}
-            ignored_columns_map[db][table][col] = True
+    ignored_columns_map = parse_ignored_columns(ignored_columns)
     table_overrides = config['source']['mysql']['tables'] if 'tables' in config['source']['mysql'] else []
     table_overrides_map = {}
     for table_dict in table_overrides:
@@ -1690,7 +1732,7 @@ def run_config(config):
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
                 futures = []
                 future_to_table = {}
-                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else []
+                table_include_list = include_list_for_database(mysql_table_include_list, database)
                 # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
                 # itself, not a result set (spec 13.06 D-13.06-26).
                 # Rows by column name through mappings(): a SQLAlchemy 2.x Row is a
@@ -1699,7 +1741,7 @@ def run_config(config):
                 for table_row in table_rows:
                     table = table_row['table_name']
                     table_name = f"{database}.{table}"
-                    if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):
+                    if table_include_list is not None and not match_table_include_list(database, table, table_include_list):
                         logging.info(f"Skipping table {database}.{table} since not in include list")
                         continue
 

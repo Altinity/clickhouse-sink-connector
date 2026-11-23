@@ -21,8 +21,20 @@ the existing terminal-failure path instead of disappearing into the event task.
 partly written and fully written suffixes, DELETE/re-INSERT, lower-numbered logs
 after an engine boundary, retained arithmetic state and seed failures. The
 original in-process restart assertion is enabled in normal regression discovery.
-The failure-mode descriptions below record the prior baseline. Transparent
-failover without engine recreation remains outside this correction.
+FM-02.04-2 below records the prior baseline and its fixed behaviour. Transparent
+failover without engine recreation is covered when the new primary's log has
+a lower file number under the same basename (spec 02.02 §3.1.1); the same-number
+case stays the residual of FM-02.02-6.
+
+**Redelivery and the cross-domain rules.** The version sequence's cross-domain
+rules (spec 02.01 §3.1.2: the GTID timestamp move and the carry of a row without
+a GTID) apply only to first deliveries and the rest of the marked event. A
+redelivery and a positionless row keep `effectiveTs = recordTs`, no move and no
+carry, so their versions stay identical on every redelivery
+(`CrossDomainVersionTest.gtidRedeliveryIsNotBumped`). On the Kafka Connect path
+every version input — `source.ts_ms`, the envelope `ts_ms`, the GTID, the Kafka
+offset — is fixed in the Kafka record, so a record redelivered from Kafka gets
+the same version (`ClickHouseStructGtidSafetyTest.kafkaConnectVersionIsRedeliveryStable`).
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` (package-private, extracted from `DebeziumChangeEventCapture`) — `nextSequenceNumber`, `seedVersionFloor`, `sequenceHighWaterPosition`, `sequenceMaxSourceTs`, `SEQUENCE_START_INITIAL = 500000000`, `SEQUENCE_START = 1000000000`
@@ -89,13 +101,15 @@ Without a seeded floor the newer post-restart event ranked below the older pre-r
 - `SequenceSeedOverflowTest.testNewerPostResumeEventCurrentlyRanksBelowOlderPreRestartEvent()` — the raw carry arithmetic of §4 (unseeded), preserved deliberately.
 - `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()` — the engine family that makes a replayed duplicate harmless.
 - `DeDuplicatorTest.testRedeliveredEventIsDuplicate()` — event-identity de-duplication on the Kafka Connect path only (§3.3).
-- Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.first_row_after_restart_is_first`.
+- `CrossDomainVersionTest.gtidRedeliveryIsNotBumped()`, `ClickHouseStructGtidSafetyTest.kafkaConnectVersionIsRedeliveryStable()` — redelivery stability under the cross-domain rules and on the Kafka Connect path.
+- `InRunRedeliveryVersionTest.redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart()`, `EngineEpochVersionTest` — the in-process engine restart (FM-02.04-2, fixed).
+- Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.first_row_after_restart_is_first`, `Replication.VersionFloor.Domains.same_file_earlier_is_redelivery`.
 - Verification: a crash-restart integration test asserting no data degradation on redelivery is not yet covered by an automated test (gap).
 
 ---
 
 ## 7. Failure Modes & Recovery
-Redelivery is the connector's universal recovery: every stop, crash and re-position ends in Debezium re-publishing from the last committed offset, and this spec is what makes that replay harmless. It is harmless after a **process** restart (the high-water position is empty and the floor is seeded, §3.2). It is NOT harmless after an engine restart **inside** the process, because the high-water position survives it (FM-02.04-2) — and the documented operator procedures (`stop_replica` / `start_replica` around `change_replication_source`, the spec 11.04 rewind) restart the engine inside the process. Until that is fixed, every operator re-position ends with a process restart.
+Redelivery is the connector's universal recovery: every stop, crash and re-position ends in Debezium re-publishing from the last committed offset, and this spec is what makes that replay harmless. It is harmless after a **process** restart (the high-water position is empty and the floor is seeded, §3.2). Since 2.11.1 it is equally harmless after an engine restart **inside** the process: every seeded engine start clears the high-water position through `VersionSequencer.beginEngineRun` (FM-02.04-2, fixed), so the documented operator procedures (`stop_replica` / `start_replica` around `change_replication_source`, the spec 11.04 rewind) no longer need a process restart for ordering.
 
 - **FM-02.04-1 Hard kill mid-stream: replay from the last committed offset**
   - **Trigger**: `kill -9`, OOM kill, host crash or power loss while rows are in flight.
@@ -108,21 +122,22 @@ Redelivery is the connector's universal recovery: every stop, crash and re-posit
 
 - **FM-02.04-2 In-process engine restart keeps the high-water position**
   - **Trigger**: the engine is recreated inside the running JVM — the completion-callback retry after a transient failure (spec 10.04 §3.5; e.g. the source connection dropping mid-transaction), REST `/restart`, `sink-connector-client stop_replica` + `start_replica`, the restart monitor — with units that had been handed off but not written (retired, spec 09.01 §3.8).
-  - **Behaviour**: `sequenceHighWaterPosition` is a static that no engine start resets (`setupDebeziumEventCapture` only raises the floor). The re-published records sit at or below it, so `nextVersionAssignment` treats them as redeliveries: no clamp, raw statement time (§3.2). For the never-written rows there is no stored copy to lose to, and a late commit among them is versioned below the earlier commit it follows.
-  - **Detection**: none. DEFECT. (The engine restart itself logs ERROR `Restarting the engine - retry n of m` or the REST line; nothing flags the versions.)
-  - **Blast radius**: keys touched by a late-commit pair inside the redelivered, never-written range keep the older value. Silent, not self-healing.
-  - **Recovery**: for any re-position or restart the operator controls, restart the PROCESS, not the engine. After an automatic in-process retry (the log shows `Restarting the engine - retry`), run the value checksum (spec 11.02) and resync (spec 11.04) the tables written in the redelivered range.
-  - **RTO**: process restart ~20 s (unmeasured); after an unnoticed in-process retry, unbounded (resync).
-  - **Test**: `InRunRedeliveryVersionTest.redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart()` (disabled; fails on 2.11.0); `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()` pins the in-run redelivery rule that causes it.
-  - **DEFECT**: §3.3's "in-run redelivery ranks at or below the stored row" assumes a stored row; for handed-off-but-unwritten units there is none and commit order is lost.
+  - **Behaviour (2.11.0)**: `sequenceHighWaterPosition` was a static that no engine start reset (`setupDebeziumEventCapture` only raised the floor). The re-published records sat at or below it, so `nextVersionAssignment` treated them as redeliveries: no clamp, raw statement time (§3.2). For the never-written rows there was no stored copy to lose to, and a late commit among them was versioned below the earlier commit it follows.
+  - **Behaviour (fixed, 2.11.1)**: `seedVersionFloorFromDurableMark` seeds the floor from the durable mark and `VersionSequencer.beginEngineRun` clears the high-water position before the new engine dispatches (spec 02.02 §3.5 rule 3). The re-published suffix is a sequence of first deliveries to the new run, clamped above the seeded floor in log order, so the late commit ranks above the earlier commit, and both above every version the previous engine handed off.
+  - **Detection**: none needed. The engine restart logs ERROR `Restarting the engine - retry n of m` or the REST line, and the seed logs `Version floor seeded to ... ms from ...`.
+  - **Blast radius**: none.
+  - **Recovery**: none needed.
+  - **RTO**: engine restart + replay of the unacknowledged units; unmeasured.
+  - **Test**: `InRunRedeliveryVersionTest.redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart()` (enabled; also `OrderingReproductionScenarios.inProcessRestartAfterReadingUnwrittenRows()`), `EngineEpochVersionTest.replayConvergesForNeverPartlyAndFullyWrittenSuffixes()`; `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()` pins the in-run redelivery rule, which still applies between engine starts.
+  - **FIXED**: §3.3's "in-run redelivery ranks at or below the stored row" is no longer relied on across an engine boundary: every engine start makes the replay a first delivery.
 
 - **FM-02.04-3 Operator rewind replays a range already in ClickHouse**
   - **Trigger**: the operator moves the offset back on purpose — the spec 11.04 `rewind-sql` after a patch, or a manual re-position to re-apply a range.
-  - **Behaviour**: after a process restart the replay is a contiguous suffix of the binlog, versioned above every stored row and in log order (§3.2), so every key ends at the source's latest image. After an in-process restart it is FM-02.04-2.
+  - **Behaviour**: after a process restart the replay is a contiguous suffix of the binlog, versioned above every stored row and in log order (§3.2), so every key ends at the source's latest image. After an in-process engine restart the same holds (FM-02.04-2, fixed).
   - **Detection**: intended; progress is visible in the per-unit INFO `***** BATCH marked as processed to debezium ****Binlog file:... Binlog position:... GTID:...`.
   - **Blast radius**: none after a process restart; duplicates collapse on merge.
   - **Recovery**: `sink-connector-client stop_replica`; write the new offset (spec 11.04 §3.5 `rewind-sql`; not `change_replication_source`, see spec 09.03 §6 FM-09.03-4); restart the PROCESS; watch the replay; re-run the checksum. The binlog must still hold the target file (`SHOW BINARY LOGS`).
   - **RTO**: process restart ~20 s + replay proportional to the rewind distance chosen by the operator; unmeasured.
   - **Test**: `DebeziumChangeEventCaptureTest.replayAfterSeededRestartIsClampedAboveTheOldRun()`.
 
-Summary: 3 failure modes, 1 DEFECT, 1 GAP.
+Summary: 3 failure modes, 0 DEFECT, 1 FIXED (FM-02.04-2), 1 GAP.

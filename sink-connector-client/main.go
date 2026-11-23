@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"time"
@@ -54,34 +54,56 @@ const (
 	SHOW_SLAVE_STATUS     = "show-slave-status"
 )
 
-// Fetches the repos for the given Github users
-func getHTTPCall(url string) *grequests.Response {
+// input is where the confirmation prompts and the DDL text are read from (tests replace it).
+var input io.Reader = os.Stdin
+
+// pause is how long the handlers wait after a request so the server can settle (tests replace it).
+var pause = time.Sleep
+
+// checkResponse turns a failed request into an error: a transport error (resp is nil then, so it is checked
+// first) or any status outside 2xx.
+func checkResponse(method string, url string, resp *grequests.Response, err error) (*grequests.Response, error) {
+	if err != nil {
+		return nil, fmt.Errorf("unable to make %s request to %s: %w", method, url, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp, fmt.Errorf("%s %s failed with HTTP status %d: %s", method, url, resp.StatusCode, resp.String())
+	}
+	return resp, nil
+}
+
+func getHTTPCall(url string) (*grequests.Response, error) {
 	resp, err := grequests.Get(url, requestOptions)
-	// you can modify the request by passing an optional RequestOptions struct
-	if err != nil {
-		log.Fatalln("Unable to make request: ", err)
-	}
-	return resp
+	return checkResponse("GET", url, resp, err)
 }
 
-func getHTTPDeleteCall(url string) *grequests.Response {
+func getHTTPDeleteCall(url string) (*grequests.Response, error) {
 	resp, err := grequests.Delete(url, requestOptions)
-	// you can modify the request by passing an optional RequestOptions struct
-	if err != nil {
-		log.Fatalln("Unable to make request: ", err)
-	}
-	return resp
+	return checkResponse("DELETE", url, resp, err)
 }
 
-func getHTTPPostCall(url string, body string) *grequests.Response {
-	// Add body
+// postJSON posts a JSON body with options of its own, so the body is not carried into later requests.
+func postJSON(url string, body interface{}) (*grequests.Response, error) {
+	resp, err := grequests.Post(url, &grequests.RequestOptions{JSON: body})
+	return checkResponse("POST", url, resp, err)
+}
+
+func getHTTPPostCall(url string, body string) (*grequests.Response, error) {
 	// create a JSON with key as "ddl" and value as the body
-	requestOptions.JSON = map[string]string{"ddl": body}
-	resp, err := grequests.Post(url, requestOptions)
-	if err != nil {
-		log.Fatalln("Unable to make request: ", err)
+	return postJSON(url, map[string]string{"ddl": body})
+}
+
+// confirm asks the operator and is true only for "y".
+func confirm() bool {
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Fscanln(input, &userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
 	}
-	return resp
+	log.Println("Continuing...")
+	return true
 }
 
 /*
@@ -108,7 +130,7 @@ func getServerUrl(action string, c *cli.Context) string {
 	return serverUrl
 }
 
-func main() {
+func newApp() *cli.App {
 	app := cli.NewApp()
 	app.EnableBashCompletion = true
 	app.Name = "Sink Connector Lightweight CLI"
@@ -139,7 +161,10 @@ func main() {
 			Usage: "Start the replication",
 			Action: func(c *cli.Context) error {
 				var serverUrl = getServerUrl(START_REPLICATION, c)
-				resp := getHTTPCall(serverUrl)
+				resp, err := getHTTPCall(serverUrl)
+				if err != nil {
+					return err
+				}
 				log.Println(resp)
 				return nil
 			},
@@ -150,7 +175,10 @@ func main() {
 			Action: func(c *cli.Context) error {
 				log.Println("***** Stopping replication..... *****")
 				var serverUrl = getServerUrl(STOP_REPLICATION, c)
-				resp := getHTTPCall(serverUrl)
+				resp, err := getHTTPCall(serverUrl)
+				if err != nil {
+					return err
+				}
 				log.Println(resp.String())
 				log.Println("***** Replication stopped successfully *****")
 				return nil
@@ -163,7 +191,10 @@ func main() {
 			Action: func(c *cli.Context) error {
 				log.Println("***** Restarting replication..... *****")
 				var serverUrl = getServerUrl(RESTART_REPLICATION, c)
-				resp := getHTTPCall(serverUrl)
+				resp, err := getHTTPCall(serverUrl)
+				if err != nil {
+					return err
+				}
 				log.Println(resp.String())
 				log.Println("***** Replication restarted successfully and configuration file reloaded from disk *****")
 				return nil
@@ -175,7 +206,10 @@ func main() {
 			Usage: "Status of replication",
 			Action: func(c *cli.Context) error {
 				var serverUrl = getServerUrl(STATUS, c)
-				resp := getHTTPCall(serverUrl)
+				resp, err := getHTTPCall(serverUrl)
+				if err != nil {
+					return err
+				}
 
 				//var j, _ = json.MarshalIndent(resp, "", "    ")
 				fmt.Println(string(pretty.Pretty([]byte(resp.String()))))
@@ -186,8 +220,7 @@ func main() {
 			Name:  DDL_TRANSLATE_COMMAND,
 			Usage: "Translate DDL to target database",
 			Action: func(c *cli.Context) error {
-				handleDDLTranslate(c)
-				return nil
+				return handleDDLTranslate(c)
 			},
 		},
 		{
@@ -236,8 +269,7 @@ func main() {
 			},
 			Action: func(c *cli.Context) error {
 
-				handleUpdateBinLogAction(c)
-				return nil
+				return handleUpdateBinLogAction(c)
 			},
 		},
 		{
@@ -251,70 +283,64 @@ func main() {
 				},
 			},
 			Action: func(c *cli.Context) error {
-				handleUpdateLsn(c)
-				return nil
+				return handleUpdateLsn(c)
 			},
 		},
 		{
 			Name:  DELETE_OFFSETS_COMMAND,
 			Usage: "Delete offsets from the sink connector",
 			Action: func(c *cli.Context) error {
-				handleDeleteOffsets(c)
-				return nil
+				return handleDeleteOffsets(c)
 			},
 		},
 		{
 			Name:  DELETE_SCHEMA_HISTORY_COMMAND,
 			Usage: "Delete schema history from the sink connector",
 			Action: func(c *cli.Context) error {
-				handleDeleteSchemaHistory(c)
-				return nil
+				return handleDeleteSchemaHistory(c)
 			},
 		},
 		{
 			Name:  SHOW_SLAVE_STATUS_COMMAND,
 			Usage: "Show slave status",
 			Action: func(c *cli.Context) error {
-				handleShowSlaveStatus(c)
-				return nil
+				return handleShowSlaveStatus(c)
 			},
 		},
 	}
 	app.Version = "1.0"
-	app.Run(os.Args)
+	return app
 }
 
-func handleDeleteOffsets(c *cli.Context) bool {
+func main() {
+	if err := newApp().Run(os.Args); err != nil {
+		log.Fatalln("Error:", err)
+	}
+}
+
+// handleDeleteOffsets deletes the connector offsets after confirmation. Declining is not an error.
+func handleDeleteOffsets(c *cli.Context) error {
 	log.Println("***** Delete offsets from the sink connector *****")
-	log.Println("Are you sure you want to continue? (y/n): ")
-	var userInput string
-	fmt.Scanln(&userInput)
-	if userInput != "y" {
-		log.Println("Exiting...")
-		return false
-	} else {
-		log.Println("Continuing...")
+	if !confirm() {
+		return nil
 	}
 	// Call a REST DELETE API to delete offsets from the sink connector
 	var deleteOffsetsUrl = getServerUrl(DELETE_OFFSETS, c)
 	log.Println("Sending request to URL: " + deleteOffsetsUrl)
-	resp := getHTTPDeleteCall(deleteOffsetsUrl)
-	time.Sleep(5 * time.Second)
-	if resp.StatusCode == 200 {
-		log.Println("Offsets deleted successfully")
-		return true
-	} else {
-		log.Println("Response Status Code:", resp.StatusCode)
-		log.Println("Error deleting offsets")
-		return false
+	_, err := getHTTPDeleteCall(deleteOffsetsUrl)
+	pause(5 * time.Second)
+	if err != nil {
+		return fmt.Errorf("error deleting offsets: %w", err)
 	}
+	log.Println("Offsets deleted successfully")
+	return nil
 }
 
-func handleDDLTranslate(c *cli.Context) bool {
+func handleDDLTranslate(c *cli.Context) error {
 	log.Println("***** Translate MySQL DDL to ClickHouse DDL *****")
 	log.Println("Enter DDL to translate: ")
 	var userInput string
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(input)
 
 	if scanner.Scan() {
 		userInput = scanner.Text()
@@ -322,85 +348,67 @@ func handleDDLTranslate(c *cli.Context) bool {
 	// Call a REST POST API to translate DDL to target database
 	var ddlTranslateUrl = getServerUrl(DDL_TRANSLATE, c)
 	log.Println("Sending request to URL: with DDL: " + userInput + " to " + ddlTranslateUrl)
-	resp := getHTTPPostCall(ddlTranslateUrl, userInput)
-	time.Sleep(5 * time.Second)
-	if resp.StatusCode == 200 {
-		log.Println(resp.String())
-		//log.Println("DDL translated successfully")
-		return true
-	} else {
-		log.Println("Response Status Code:", resp.StatusCode)
-		log.Println("Error translating DDL")
-		return false
+	resp, err := getHTTPPostCall(ddlTranslateUrl, userInput)
+	pause(5 * time.Second)
+	if err != nil {
+		return fmt.Errorf("error translating DDL: %w", err)
 	}
+	log.Println(resp.String())
+	return nil
 }
 
-func handleDeleteSchemaHistory(c *cli.Context) bool {
+func handleDeleteSchemaHistory(c *cli.Context) error {
 	log.Println("***** Delete schema history from the sink connector *****")
-	log.Println("Are you sure you want to continue? (y/n): ")
-	var userInput string
-	fmt.Scanln(&userInput)
-	if userInput != "y" {
-		log.Println("Exiting...")
-		return false
-	} else {
-		log.Println("Continuing...")
+	if !confirm() {
+		return nil
 	}
-	// Call a REST DELETE API to delete offsets from the sink connector
-	var deleteOffsetsUrl = getServerUrl(DELETE_SCHEMA_HISTORY, c)
-	log.Println("Sending request to URL: " + deleteOffsetsUrl)
-	resp := getHTTPDeleteCall(deleteOffsetsUrl)
-	time.Sleep(5 * time.Second)
-	if resp.StatusCode == 200 {
-		log.Println("Schema history deleted successfully")
-		return true
-	} else {
-		log.Println("Response Status Code:", resp.StatusCode)
-		log.Println("Error deleting schema history")
-		return false
+	var deleteSchemaHistoryUrl = getServerUrl(DELETE_SCHEMA_HISTORY, c)
+	log.Println("Sending request to URL: " + deleteSchemaHistoryUrl)
+	_, err := getHTTPDeleteCall(deleteSchemaHistoryUrl)
+	pause(5 * time.Second)
+	if err != nil {
+		return fmt.Errorf("error deleting schema history: %w", err)
 	}
+	log.Println("Schema history deleted successfully")
+	return nil
 }
 
-func handleUpdateLsn(c *cli.Context) bool {
+// handleUpdateLsn stops replication, sets the LSN and starts replication again. Any failing step aborts the
+// sequence: the LSN is never updated on a connector that did not stop, and replication is not started after a
+// failed update (it stays stopped; start_replica starts it once the cause is fixed).
+func handleUpdateLsn(c *cli.Context) error {
 	var lsnPosition = c.String("lsn")
 	log.Println("***** lsn position:", lsnPosition+"   *****")
-	log.Println("Are you sure you want to continue? (y/n): ")
-	var userInput string
-	fmt.Scanln(&userInput)
-	if userInput != "y" {
-		log.Println("Exiting...")
-		return false
-	} else {
-		log.Println("Continuing...")
+	if !confirm() {
+		return nil
 	}
 
 	// Step1: Stop replication
 	log.Println("Stopping replication...")
 	var stopUrl = getServerUrl(STOP_REPLICATION, c)
-	resp := getHTTPCall(stopUrl)
-	time.Sleep(5 * time.Second)
-
-	// Step2: Update binlog position
-	log.Println("Updating lsn position..")
-	var updateLsnBody = UpdateLsn{Lsn: lsnPosition}
-	var postBody, _ = json.Marshal(updateLsnBody)
-	var requestOptions_copy = requestOptions
-	// Add data to JSON field
-	requestOptions_copy.JSON = string(postBody)
-	var serverUrl = getServerUrl(UPDATE_LSN, c)
-	resp, err := grequests.Post(serverUrl, requestOptions_copy)
-	log.Println(resp.String())
-	if err != nil {
-		log.Println(err)
-		log.Println("Create request failed for Github API")
+	if _, err := getHTTPCall(stopUrl); err != nil {
+		return fmt.Errorf("replication was not stopped, lsn not updated: %w", err)
 	}
+	pause(5 * time.Second)
+
+	// Step2: Update lsn position
+	log.Println("Updating lsn position..")
+	var serverUrl = getServerUrl(UPDATE_LSN, c)
+	resp, err := postJSON(serverUrl, UpdateLsn{Lsn: lsnPosition})
+	if err != nil {
+		return fmt.Errorf("lsn update failed, replication is still stopped: %w", err)
+	}
+	log.Println(resp.String())
 
 	// Step3: Start replication
-	time.Sleep(10 * time.Second)
+	pause(10 * time.Second)
 	var startUrl = getServerUrl(START_REPLICATION, c)
-	resp1 := getHTTPCall(startUrl)
+	resp1, err := getHTTPCall(startUrl)
+	if err != nil {
+		return fmt.Errorf("lsn updated but replication did not start: %w", err)
+	}
 	log.Println(resp1.String())
-	return true
+	return nil
 }
 
 /*
@@ -408,7 +416,7 @@ func handleUpdateLsn(c *cli.Context) bool {
 Function to handle update binlog action
 which is used to set binlog file/position and gtids
 */
-func handleUpdateBinLogAction(c *cli.Context) bool {
+func handleUpdateBinLogAction(c *cli.Context) error {
 	var binlogFile = c.String("binlog_file")
 	var binlogPos = c.String("binlog_position")
 	var gtid = c.String("gtid")
@@ -417,77 +425,43 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	var sourceUsername = c.String("source_username")
 	var sourcePassword = c.String("source_password")
 
-	if gtid == "" {
-		// If gtid is empty, then a valid binlog file and position
-		// needs to be passed.
-		//if binlogPos == "" || binlogFile == "" {
-		//	log.Println(" ****** A Valid binlog position/file or GTID set is required")
-		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
-		//	return false
-		//} else if sourceHost == "" || sourcePort == "" || sourceUsername == "" || sourcePassword == "" {
-		//	log.Println(" ****** A Valid source host/port/username/password is required")
-		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
-		//	return false
-		//}
-	}
 	log.Println("***** binlog file: ", binlogFile+"   *****")
 	log.Println("***** binlog position:", binlogPos+"   *****")
 	log.Println("*****  GTID:", gtid+"   *****")
 	log.Println("*****  Source Host:", sourceHost+"   *****")
 	log.Println("*****  Source Port:", sourcePort+"   *****")
 	log.Println("*****  Source Username:", sourceUsername+"   *****")
-	log.Println("*****  Source Password:", sourcePassword+"   *****")
-
-	log.Println("Are you sure you want to continue? (y/n): ")
-	var userInput string
-	fmt.Scanln(&userInput)
-	if userInput != "y" {
-		log.Println("Exiting...")
-		return false
-	} else {
-		log.Println("Continuing...")
+	if sourcePassword != "" {
+		log.Println("*****  Source Password: ****   *****")
 	}
 
-	//// Step1: Stop replication
-	//log.Println("Stopping replication...")
-	//var stopUrl = getServerUrl(STOP_REPLICATION, c)
-	//resp := getHTTPCall(stopUrl)
-	//time.Sleep(5 * time.Second)
+	if !confirm() {
+		return nil
+	}
 
-	// Step2: Update binlog position
 	log.Println("Updating binlog file/position and gtids...")
 	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid, SourceHost: sourceHost, SourcePort: sourcePort, SourceUser: sourceUsername, SourcePassword: sourcePassword}
-	var postBody, _ = json.Marshal(updateBinLogBody)
-	var requestOptions_copy = requestOptions
-	// Add data to JSON field
-	requestOptions_copy.JSON = string(postBody)
 	var serverUrl = getServerUrl(UPDATE_BINLOG, c)
-	resp, err := grequests.Post(serverUrl, requestOptions_copy)
-	if resp.StatusCode == 400 {
-		log.Println("***** Error: Replication is running, please stop it first ******")
-		log.Println("***** Use stop_replica command to stop replication ******")
-		log.Println("***** After change_replication_source is successful, use start_replica to start replication *******")
-		return false
-	}
-
-	log.Println(resp.String())
+	resp, err := postJSON(serverUrl, updateBinLogBody)
 	if err != nil {
-		log.Println(err)
-		log.Println("Create request failed")
+		if resp != nil && resp.StatusCode == 400 {
+			log.Println("***** Error: Replication is running, please stop it first ******")
+			log.Println("***** Use stop_replica command to stop replication ******")
+			log.Println("***** After change_replication_source is successful, use start_replica to start replication *******")
+		}
+		return fmt.Errorf("binlog update failed: %w", err)
 	}
-	//
-	//// Step3: Start replication
-	//time.Sleep(10 * time.Second)
-	//var startUrl = getServerUrl(START_REPLICATION, c)
-	//resp1 := getHTTPCall(startUrl)
-	//log.Println(resp1.String())
-	return true
+	log.Println(resp.String())
+	return nil
 }
 
-func handleShowSlaveStatus(c *cli.Context) bool {
+func handleShowSlaveStatus(c *cli.Context) error {
 	log.Println("***** Show slave status ******")
 	var serverUrl = getServerUrl(SHOW_SLAVE_STATUS, c)
-	resp := getHTTPCall(serverUrl)
+	resp, err := getHTTPCall(serverUrl)
+	if err != nil {
+		return err
+	}
 	log.Println(resp.String())
-	return true
+	return nil
 }

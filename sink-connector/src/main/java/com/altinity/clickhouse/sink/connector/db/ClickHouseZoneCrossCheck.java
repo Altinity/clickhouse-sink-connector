@@ -77,7 +77,9 @@ public final class ClickHouseZoneCrossCheck {
         }
 
         List<String> findings = new ArrayList<>();
-        if (!configuredZone.equals(serverZone)) {
+        // Zone NAMES that denote the same rules (US/Central, America/Chicago) agree, exactly as for
+        // the column check below; raw String.equals would report a false mismatch for an alias.
+        if (!sameZoneName(serverZone, configuredZone)) {
             findings.add("clickhouse.datetime.timezone is '" + configuredZone
                     + "' but the ClickHouse server reports timezone() '" + serverZone
                     + "'. Align the server timezone or the configured zone.");
@@ -159,7 +161,10 @@ public final class ClickHouseZoneCrossCheck {
                 "SELECT c.database, c.table, c.name, c.type, t.engine FROM system.columns AS c"
                         + " INNER JOIN system.tables AS t ON c.database = t.database AND c.table = t.name"
                         + " WHERE c.type LIKE '%DateTime%'"
-                        + " AND c.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')";
+                        + " AND c.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')"
+                        // Inner storage tables of materialized views (.inner.<view>, .inner_id.<uuid>) are
+                        // owned by the view, which is itself exempt; the sink never writes to them.
+                        + " AND c.table NOT LIKE '.inner%'";
 
         private final Connection connection;
 

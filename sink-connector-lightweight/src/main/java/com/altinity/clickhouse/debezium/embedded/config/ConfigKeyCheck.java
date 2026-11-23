@@ -444,10 +444,36 @@ public final class ConfigKeyCheck {
                     }
                 }
             } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                LOG.warn("Debezium config source {} not available: {}", source.className(), e.toString());
+                logSourceUnavailable(source.className(), e);
             }
         }
         return keys;
+    }
+
+    /**
+     * The connector configuration classes of connectors a deployment may not ship. A MySQL deployment need not carry
+     * the MongoDB connector, so its absence is the normal case, not a defect, and is not worth a WARN on every
+     * start (the field sets are read twice, once for names and once for aliases).
+     */
+    static final Set<String> OPTIONAL_CONNECTOR_SOURCES = Set.of(
+            "io.debezium.connector.postgresql.PostgresConnectorConfig",
+            "io.debezium.connector.mongodb.MongoDbConnectorConfig");
+
+    /**
+     * Reports a field source that could not be read. A missing optional connector class is logged at DEBUG; any
+     * other failure, and any failure of a core source, stays a WARN because it hides real keys from the check.
+     *
+     * @param className the class that could not be read
+     * @param failure   why
+     */
+    static void logSourceUnavailable(String className, Throwable failure) {
+        boolean missingOptional = OPTIONAL_CONNECTOR_SOURCES.contains(className)
+                && (failure instanceof ClassNotFoundException || failure instanceof NoClassDefFoundError);
+        if (missingOptional) {
+            LOG.debug("Optional Debezium connector config {} is not on the classpath: {}", className, failure.toString());
+        } else {
+            LOG.warn("Debezium config source {} not available: {}", className, failure.toString());
+        }
     }
 
     static String prefixOf(FieldSource source) throws ReflectiveOperationException {

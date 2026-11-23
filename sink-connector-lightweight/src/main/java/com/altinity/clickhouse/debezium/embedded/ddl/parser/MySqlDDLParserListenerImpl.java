@@ -412,7 +412,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * as the standard-mode translation resolves a {@code db.table} reference.
      */
     private void recordHistoryBulkClose(String table, ClickHouseConverter.CDC_OPERATION op) {
-        HistoryBulkClose request = new HistoryBulkClose(this.databaseName, stripBackticks(table), op);
+        HistoryBulkClose request = new HistoryBulkClose(this.databaseName, table, op);
         this.historyBulkCloses.add(request);
         log.info("replication.history.enable=true: source {} of {} is applied as a bulk close of the SCD2 "
                         + "table -- every open row is closed and marked, nothing is truncated or dropped "
@@ -1732,6 +1732,102 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         return name == null ? null : name.replace("`", "");
     }
 
+    /** An identifier ClickHouse accepts without quoting. */
+    private static final Pattern SIMPLE_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+
+    /**
+     * A table reference of a statement, split on the dots that are NOT inside
+     * backticks, with the outer backticks of each part removed.
+     *
+     * <p>{@code `my.db`.`t.1`} is the database {@code my.db} and the table
+     * {@code t.1}; a plain {@code split("\\.")} would cut it in four.</p>
+     */
+    static final class TableRef {
+        /** The explicit database qualifier, or null when the reference is unqualified. */
+        final String database;
+        /** The table name without outer backticks. */
+        final String table;
+        /** Whether the table was written in backticks (kept quoted in the output). */
+        final boolean tableQuoted;
+
+        TableRef(String database, String table, boolean tableQuoted) {
+            this.database = database;
+            this.table = table;
+            this.tableQuoted = tableQuoted;
+        }
+    }
+
+    /**
+     * Splits {@code [db.]table} (as {@code getText()} returns it, so without
+     * whitespace) into its parts, respecting backticks. A doubled backtick
+     * inside a quoted part is one literal backtick.
+     *
+     * @param text the table reference as written, e.g. {@code `db`.`t`}
+     * @return the parts; {@link TableRef#database} is null when unqualified
+     */
+    static TableRef parseTableRef(String text) {
+        List<String> parts = new ArrayList<>();
+        List<Boolean> quoted = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuote = false;
+        boolean currentQuoted = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '`') {
+                if (inQuote && i + 1 < text.length() && text.charAt(i + 1) == '`') {
+                    current.append('`');
+                    i++;
+                } else {
+                    inQuote = !inQuote;
+                    currentQuoted = true;
+                }
+            } else if (c == '.' && !inQuote) {
+                parts.add(current.toString());
+                quoted.add(currentQuoted);
+                current.setLength(0);
+                currentQuoted = false;
+            } else {
+                current.append(c);
+            }
+        }
+        parts.add(current.toString());
+        quoted.add(currentQuoted);
+        int last = parts.size() - 1;
+        String database = last >= 1 ? parts.get(last - 1) : null;
+        return new TableRef(database, parts.get(last), quoted.get(last));
+    }
+
+    /**
+     * Renders an identifier for ClickHouse: backtick-quoted (with {@code `}
+     * and {@code \} escaped) when {@code force} is set or when it is not a
+     * plain identifier, bare otherwise.
+     */
+    static String quoteIdentifier(String name, boolean force) {
+        if (!force && SIMPLE_IDENTIFIER.matcher(name).matches()) {
+            return name;
+        }
+        return "`" + name.replace("\\", "\\\\").replace("`", "``") + "`";
+    }
+
+    /**
+     * The destination database a statement's table lives in: the table's
+     * explicit database qualifier (through {@code clickhouse.database.override.map}
+     * when it lists it) -- the session {@link #databaseName} ONLY when the
+     * reference is unqualified. In replication-history mode every table lives
+     * in the configured history database, so the qualifier is ignored there.
+     */
+    private String targetDatabase(String explicitDatabase) {
+        if (explicitDatabase == null || explicitDatabase.isEmpty() || isReplicationHistoryEnabled()) {
+            return this.databaseName;
+        }
+        return overrideDatabaseName(explicitDatabase);
+    }
+
+    /** {@code database.table} for ClickHouse; the table keeps the quoting it was written with. */
+    private static String qualified(String database, TableRef table, boolean forceDatabaseQuote) {
+        return quoteIdentifier(database, forceDatabaseQuote) + "." + quoteIdentifier(table.table, table.tableQuoted);
+    }
+
     /**
      * Reads the column names of an index column list from the parse tree.
      *
@@ -2646,15 +2742,34 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * source database prefix dropped.
      */
     private String qualifiedTargetTable() {
-        String table = this.tableName;
-        if (table.contains(".")) {
-            table = table.split("\\.")[1];
-        }
-        return "`" + this.databaseName + "`." + table;
+        return qualified(this.databaseName, parseTableRef(this.tableName), true);
     }
 
+    /**
+     * Translates an ALTER TABLE against the table's OWN database: an explicit
+     * {@code db2.t} qualifier wins over the session database (through the
+     * database override map), and the session database is used only for an
+     * unqualified {@code t}. {@link #databaseName} is switched for the
+     * statement so every lookup and emitted name below agrees, and restored
+     * afterwards so a following statement is not affected.
+     */
     @Override
     public void enterAlterTable(MySqlParser.AlterTableContext alterTableContext) {
+        String sessionDatabase = this.databaseName;
+        for (ParseTree child : alterTableContext.children) {
+            if (child instanceof TableNameContext) {
+                this.databaseName = targetDatabase(parseTableRef(child.getText()).database);
+                break;
+            }
+        }
+        try {
+            translateAlterTable(alterTableContext);
+        } finally {
+            this.databaseName = sessionDatabase;
+        }
+    }
+
+    private void translateAlterTable(MySqlParser.AlterTableContext alterTableContext) {
         List<ParseTree> pt = alterTableContext.children;
         // Index in this.query where the "ALTER TABLE <table>" header ends and the
         // clause list begins. Separators and the empty-statement check below are
@@ -2687,7 +2802,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // The caller passes "" as the table name; every system.columns
                 // lookup below needs the clean name of the table named HERE.
-                this.cleanTableName = Utils.extractPlainTableName(this.tableName);
+                this.cleanTableName = parseTableRef(this.tableName).table;
                 this.query.append(String.format(Constants.ALTER_TABLE, qualifiedTargetTable()));
                 headerEnd = this.query.length();
             } else if (tree instanceof AlterByAddColumnContext
@@ -2851,8 +2966,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (this.query.length() > 0) {
                 this.query.append("\n");
             }
+            // An unqualified new name stays in the table's own database (MySQL
+            // semantics); a qualified one moves the table to that database.
+            TableRef renamed = parseTableRef(renameTarget);
             this.query.append(String.format(Constants.ALTER_RENAME_TABLE, qualifiedTargetTable(),
-                    "`" + this.databaseName + "`." + renameTarget));
+                    qualified(targetDatabase(renamed.database), renamed, true)));
         }
     }
 
@@ -3226,12 +3344,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
     /**
      * Extracts the new table name of an {@code ALTER TABLE ... RENAME [TO|AS]}
-     * clause. A qualified target ({@code RENAME TO db2.t2}) is reduced to its
-     * table part; the caller qualifies it with the destination database, so
-     * the result is never {@code `db`.db2.t2} (Spec 06.04 §3.4).
+     * clause. A qualified target ({@code RENAME TO db2.t2}) is returned as
+     * written; the caller splits it with {@link #parseTableRef} and keeps its
+     * explicit database, so the table is moved to {@code db2} rather than
+     * silently kept in the session database (Spec 06.04 §3.4).
      *
      * @param tree The parse tree representing the RENAME clause.
-     * @return the bare new table name, or null if none was found.
+     * @return the new table reference as written, or null if none was found.
      */
     private static String renameTargetTable(MySqlParser.AlterByRenameContext tree) {
         String newTableName = null;
@@ -3240,9 +3359,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     || alterByRenameChildren instanceof MySqlParser.FullIdContext) {
                 newTableName = alterByRenameChildren.getText();
             }
-        }
-        if (newTableName != null && newTableName.contains(".")) {
-            newTableName = newTableName.split("\\.")[1];
         }
         return newTableName;
     }
@@ -3413,15 +3529,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
-                        String tableName = tableNameChild.getText();
-                        // A qualified `db.t` keeps only the table: the target
-                        // database is always the listener's databaseName.
-                        String bareTableName = tableName.contains(".")
-                                ? tableName.split("\\.")[1] : tableName;
+                        // A qualified `db2.t` drops db2's table: the explicit
+                        // database wins, the session database is only the
+                        // fallback for an unqualified name.
+                        TableRef table = parseTableRef(tableNameChild.getText());
                         if (historyBulkClose) {
-                            recordHistoryBulkClose(bareTableName, ClickHouseConverter.CDC_OPERATION.DELETE);
+                            recordHistoryBulkClose(table.table, ClickHouseConverter.CDC_OPERATION.DELETE);
                         } else {
-                            this.query.append(databaseName).append(".").append(bareTableName);
+                            this.query.append(qualified(targetDatabase(table.database), table, false));
                         }
                     } else if (tableNameChild instanceof TerminalNodeImpl && !historyBulkClose) {
                         this.query.append(tableNameChild.getText());
@@ -3458,13 +3573,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     // table across databases, so each side is mapped through the override map, not
                     // both rewritten to the listener's database. An unqualified side is in the DDL's
                     // database. Spec 06.04 section 3.4.
-                    if (originalTableName.contains(".") || newTableName.contains(".")) {
-                        this.query.append(renameSideQualifiedName(originalTableName)).append(" to ")
-                                .append(renameSideQualifiedName(newTableName));
-                    } else {
-                        this.query.append(databaseName).append(".").append(originalTableName).append(" to ").append(databaseName)
-                                .append(".").append(newTableName);
-                    }
+                    this.query.append(renameSideQualifiedName(originalTableName)).append(" to ")
+                            .append(renameSideQualifiedName(newTableName));
                 }
             } else if(child instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {
@@ -3483,11 +3593,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @return the ClickHouse name, e.g. {@code src.t} or {@code dst.t}
      */
     private String renameSideQualifiedName(String sourceName) {
-        int dot = sourceName.lastIndexOf('.');
-        if (dot < 0) {
-            return this.databaseName + "." + sourceName;
-        }
-        return overrideDatabaseName(sourceName.substring(0, dot)) + "." + sourceName.substring(dot + 1);
+        TableRef side = parseTableRef(sourceName);
+        String database = side.database == null ? this.databaseName : overrideDatabaseName(side.database);
+        return qualified(database, side, false);
     }
 
     /**
@@ -3505,11 +3613,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.dropOrTruncateStatement = true;
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
-                String tableName = child.getText();
-                // A qualified `db.t` keeps only the table: the target database
-                // is always the listener's databaseName.
-                String bareTableName = tableName.contains(".")
-                        ? tableName.split("\\.")[1] : tableName;
+                // A qualified `db2.t` truncates db2's table: the explicit
+                // database wins, the session database is only the fallback
+                // for an unqualified name.
+                TableRef table = parseTableRef(child.getText());
                 if (isReplicationHistoryEnabled()) {
                     // History mode (Spec 12.03 section 3.4): the SCD2 table is
                     // never truncated -- that erased the history (the E2E run
@@ -3517,14 +3624,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     // emitted; the table is recorded as a bulk-close request
                     // (marker 'T') that performDDLOperation applies in place
                     // of the statement: only INSERTs, nothing is destroyed.
-                    recordHistoryBulkClose(bareTableName, ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+                    recordHistoryBulkClose(table.table, ClickHouseConverter.CDC_OPERATION.TRUNCATE);
                     continue;
                 }
                 // DESTRUCTIVE: standard mode only -- the text of a TRUNCATE MySQL
                 // already executed, applied by performDDLOperation to the mirrored
                 // table; the connector never originates a truncation.
                 this.query.append(String.format(Constants.TRUNCATE_TABLE,
-                        "`" + databaseName + "`." + bareTableName));
+                        qualified(targetDatabase(table.database), table, true)));
             }
         }
     }

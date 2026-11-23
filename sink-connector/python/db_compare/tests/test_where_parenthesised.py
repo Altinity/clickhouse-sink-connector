@@ -67,7 +67,7 @@ class ChunkedAndUnchunkedSourceTests(unittest.TestCase):
 
     def test_chunked_statement_keeps_where_as_one_operand(self):
         where = self.side_where({"min_pk": 1, "max_pk": 10}, "id")
-        self.assertIn(OPERAND + " and id between 1 and 10", where)
+        self.assertIn(OPERAND + " and `id` between 1 and 10", where)
         self.assertNotIn("and " + WHERE, where)
 
     def test_unchunked_statement_keeps_where_as_one_operand(self):
@@ -92,7 +92,7 @@ class ChunkedAndUnchunkedSourceTests(unittest.TestCase):
         self.assertTrue(chunks)
         self.assertTrue(bounded)
         for sql in bounded:
-            self.assertIn("where " + OPERAND + " and id between", sql)
+            self.assertIn("where " + OPERAND + " and `id` between", sql)
 
 
 class ClickHouseReplicaTests(unittest.TestCase):
@@ -169,14 +169,19 @@ class CountToolTests(unittest.TestCase):
 
         def fake_execute(conn, sql):
             captured.append(sql)
+            if "from system.columns" in sql:
+                return ([], 0)  # catalog read: no partition key
+            if "engine_full" in sql:
+                return ([("MergeTree ORDER BY id",)], 1)
             return ([[0]], 1)
 
         with mock.patch.object(ch_count, "get_connection", return_value=mock.Mock()), \
                 mock.patch.object(ch_count, "execute_sql", side_effect=fake_execute):
             ch_count.calculate_table_count("t1", None, "user", "pw")
-        self.assertTrue(captured)
-        self.assertIn("where 1=1 and " + OPERAND, captured[0])
-        self.assertNotIn("and " + WHERE, captured[0])
+        counts = [sql for sql in captured if sql.startswith("select count(*)")]
+        self.assertEqual(len(counts), 1)
+        self.assertIn("where 1=1 and " + OPERAND, counts[0])
+        self.assertNotIn("and " + WHERE, counts[0])
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ defect. Do not read it as a design. The main conclusions:
 | Package marker | `sink-connector/python/db_dump/__init__.py` (`__version__ = "0.1"`) | `sink-connector/python/ch_sink_tools/db_dump/__init__.py` (docstring only) |
 | MySQL connection, selection SQL, credentials (Spec 13.02) | `sink-connector/python/db/mysql.py` | `sink-connector/python/ch_sink_tools/db/mysql.py` |
 | Name-template engine (PostgreSQL dumper only) | none | `sink-connector/python/ch_sink_tools/db_dump/naming.py` |
-| Unit tests | `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py` (imports the **legacy** dumper only) | `sink-connector/python/tests/test_naming.py` (packaged `naming` and `postgres_dumper.filter_tables_by_regex`) |
+| Unit tests | `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py` (imports the **legacy** dumper only), `sink-connector/python/db_dump/tests/test_mysql_dumper_where.py` (both copies; D-13.03-11) | `sink-connector/python/tests/test_naming.py` (packaged `naming` and `postgres_dumper.filter_tables_by_regex`) |
 | Entry point | run as a script: `python db_dump/mysql_dumper.py` with `PYTHONPATH=.` (`sink-connector/python/install.sh:4`) | `ch-mysql-dump = ch_sink_tools.db_dump.mysql_dumper:main` (`sink-connector/python/pyproject.toml:48`) |
 | Dependency floor that triggers D-13.03-3 | `sink-connector/python/requirements.txt:5` | `sink-connector/python/pyproject.toml:25` |
 
@@ -130,7 +130,7 @@ used to find `mysqlsh`, and `HOME` is used by `os.path.expanduser` inside `resol
 | `--include_tables_regex` | str | `'.'` | `table_name rlike '<re>'` in the table query and in the partition query's sub-select. Interpolated unescaped. | yes, see D-13.03-8 |
 | `--exclude_tables_regex` | str | `None` | `and table_name not rlike '<re>'` in both queries. | yes, see D-13.03-8 |
 | `--include_partitions_regex` | str | `None` | Partition query only: `and partition_name rlike '<re>'`. **Not** passed to the table query (L257-261/P218-222). It is the only flag that makes the dumper pass the mysqlsh `partitions` option: without it, whole tables are dumped (D-13.03-2 fix). | partially (D-13.03-10) |
-| `--where` | str | `None` | Passed to `generate_mysqlsh_command` and on to the clause builder as `where`, then **never used**. | **ignored** (D-13.03-11) |
+| `--where` | str | `None` | Passed to the clause builder, which sets the `util.dumpTables` option `where` to `{'<db>.<table>': '<condition>'}` for every dumped table (`build_where_option`). An empty condition, a condition with `--schema_only`, or a condition with no table selected raises `ValueError` (the run exits 1 before mysqlsh starts). The tool wraps `mysqlsh` only, so there is no `mydumper` path. | yes (D-13.03-11 fixed) |
 | `--threads` | int | `1` | mysqlsh `threads` (mysqlsh's own default is 4). | yes |
 | `--bytes_per_chunk` | str | `'64M'` | mysqlsh `bytesPerChunk`. Setting it implicitly turns chunking on. Not validated (mysqlsh minimum `128k`). | yes |
 | `--debug` | flag | `False` | Root logger and handler at DEBUG: logs the full mysqlsh command (redacted in legacy, **clear text in packaged**, D-13.03-7) and every selection SQL. | yes |
@@ -572,6 +572,12 @@ baseline (`db_compare/tests db_load/tests db_dump/tests tests`) gives **227 pass
 unchanged from the brief. With the fixes for D-13.03-1, -2, -12 and -13 the same run gives **268 passed, 5
 skipped**: the 41 tests of `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py` were added.
 
+`--where` tests (`sink-connector/python/db_dump/tests/test_mysql_dumper_where.py`, D-13.03-11), against both
+copies: the `where` option holds `{'<db>.<table>': '<condition>'}` for every dumped table and reaches the script
+file passed to `mysqlsh -f`; it is absent without `--where`; quotes in the condition survive; an empty condition,
+`--schema_only` with `--where` and an empty table list raise `ValueError`. With the loader and resync suites it
+ran in the **258 passed** offline run of 2026-11-23 (Spec 13.04 §5.1).
+
 Snapshot tests (`sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py`). Each one runs against
 **both** copies (parametrised `legacy` / `packaged`) unless noted. `main()` runs with a fake connection layer
 and a fake mysqlsh that writes MySQL Shell dump metadata into a temporary directory:
@@ -803,17 +809,21 @@ statement quoting). Key outputs are quoted with each defect.
   - **Test**: `GAP: main() scope matrix (5.2 item 1)`
   - **DEFECT**: flags do not select what they name (D-13.03-9, D-13.03-10, D-13.03-14).
 
-- **FM-13.03-9 `--where` is silently ignored**
+- **FM-13.03-9 `--where` reaches mysqlsh or is refused**
   - **Trigger**: `--where "<condition>"`.
-  - **Behaviour**: the value is threaded through `generate_mysqlsh_command` into the clause builder's `where`
-    parameter and never used (L121/L131, P89/P98). Reproduced: the statement for `--where 'id>5'` is identical
-    to the one without it.
-  - **Detection**: none, apart from dump size.
-  - **Blast radius**: full tables are dumped instead of a subset. If loaded, all rows are re-inserted.
-  - **Recovery**: none in the tool. Use mysqlsh directly with `where: {"schema.table": "..."}`.
+  - **Behaviour**: `build_where_option` puts the condition in the `where` dump option of every dumped table
+    (`{'<db>.<table>': '<condition>'}`). Before the fix the value was threaded through `generate_mysqlsh_command`
+    into the clause builder's `where` parameter and never used: the statement for `--where 'id>5'` was identical
+    to the one without it, and full tables were dumped. Now an empty condition, `--schema_only` with `--where`,
+    or no selected table raises `ValueError` and the tool exits 1 before mysqlsh starts. A condition that names a
+    column a selected table lacks is rejected by mysqlsh itself (non-zero exit, `RuntimeError`).
+  - **Detection**: the exit status and the error log line.
+  - **Blast radius**: none when refused. The filter applies to every table the scope selects, so combine it with
+    `--include_tables_regex` when the column exists in some tables only.
+  - **Recovery**: fix the condition or narrow the table scope, then re-run.
   - **RTO**: unmeasured.
-  - **Test**: `GAP: --where reaches the dump options or is rejected`
-  - **DEFECT**: accepted-but-ignored flag (D-13.03-11).
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_where.py::TestWhereReachesMysqlsh`
+  - **DEFECT**: D-13.03-11 (fixed).
 
 - **FM-13.03-10 mysqlsh succeeds but the tool reports failure, or blocks**
   - **Trigger**: mysqlsh closes its output before it has fully exited, or leaves a descendant holding the pipe.
@@ -954,7 +964,7 @@ Locations are relative to `sink-connector/python/` in the 2.11.0 tree.
 | D-13.03-8 | S2 | both | `db/mysql.py:41,44,47,49,71,76`, `ch_sink_tools/db/mysql.py:33,36,39,41,63,68` | reproduced (SQL text with `rlike '^t\d+$'`); server-side unescape per the MySQL manual, so `^td+$` matches `tdd`, not `t1` | Regexes and the schema name are interpolated into SQL string literals unescaped: backslash escapes are consumed (silently different table set) and quotes break or inject SQL. |
 | D-13.03-9 | S3 | both | `db_dump/mysql_dumper.py:271,286-288`, `ch_sink_tools/db_dump/mysql_dumper.py:232,247-249` | reproduced (`--partitioned_tables_only` lists `t_np` with `'mydb.t_np': []`) | `--partitioned_tables_only` still dumps non-partitioned tables (their NULL partition row is counted). |
 | D-13.03-10 | S3 | both | `db_dump/mysql_dumper.py:257-261`, `ch_sink_tools/db_dump/mysql_dumper.py:218-222` | reproduced (`--include_partitions_regex p2026` dumps all three tables, map only `{'mydb.t_p': ['p2026']}`) | `--include_partitions_regex` does not restrict the table list: non-partitioned tables and partitioned tables without a matching partition are dumped in full. |
-| D-13.03-11 | S3 | both | `db_dump/mysql_dumper.py:121,131,200,305`, `ch_sink_tools/db_dump/mysql_dumper.py:89,98,164,266` | reproduced (statement identical with and without `--where`) | `--where` is accepted and silently ignored. |
+| D-13.03-11 | S3 | both | `db_dump/mysql_dumper.py:121,131,200,305`, `ch_sink_tools/db_dump/mysql_dumper.py:89,98,164,266` | reproduced (statement identical with and without `--where`) | FIXED: `--where` becomes the `where` dump option of every dumped table (`build_where_option`), and an unusable combination raises `ValueError`; it was accepted and silently ignored. Tests: `sink-connector/python/db_dump/tests/test_mysql_dumper_where.py`. |
 | D-13.03-12 | S3 | both | `db_dump/mysql_dumper.py:91-96`, `ch_sink_tools/db_dump/mysql_dumper.py:59-64` | reproduced (`'None' after 0.02s`; grandchild blocks 2.02 s) | FIXED: `run_command` uses `process.wait()` in both copies. Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestRunCommandExitStatus`. Was: exit status read with `poll()` right after EOF: it can be `'None'`, so a successful dump is reported as failed. |
 | D-13.03-13 | S2 | both | `db_dump/mysql_dumper.py:244,249,313`, `ch_sink_tools/db_dump/mysql_dumper.py:205,210,273` | reproduced (`python -O`: mysqlsh rc 127 and exit 0) | FIXED: the three `assert`s are explicit checks in both copies (ERROR plus exit 1, or `RuntimeError` inside the `try`). Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestOptimizedInterpreter::test_failure_exits_non_zero_under_python_O`. Was: all failure checks are `assert`s. Under `-O`/`PYTHONOPTIMIZE` a failed or partial dump exits 0. |
 | D-13.03-14 | S4 | both | `db/mysql.py:44`, `ch_sink_tools/db/mysql.py:36` | code-read (`having count(*) = 1` over `information_schema.partitions`) | A single-partition table is classified as non-partitioned. |

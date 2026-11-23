@@ -38,7 +38,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "employees",
                 createFields(), this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         System.out.println("QUERY" + query);
-        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(`customerName`) ORDER BY(`customerName`)"));
     }
 
     /** Spec 08.05 section 3.2: the all-columns key emitted for the shared test fields (none nullable). */
@@ -158,7 +158,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
                 keylessFields(true), keylessColumns(), true, false, null,
                 new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
-        Assert.assertTrue(query, query.contains("PRIMARY KEY(a) ORDER BY(a)"));
+        Assert.assertTrue(query, query.contains("PRIMARY KEY(`a`) ORDER BY(`a`)"));
         Assert.assertFalse(query, query.contains("allow_nullable_key"));
     }
 

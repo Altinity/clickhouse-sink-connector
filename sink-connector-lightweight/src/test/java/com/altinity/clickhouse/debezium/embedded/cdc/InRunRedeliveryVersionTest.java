@@ -5,13 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.altinity.clickhouse.sink.connector.model.SourcePosition;
 
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Regression for the seeded in-process restart boundary, plus the unresolved
- * transparent in-run failover case. The baseline kept the position gate across
+ * Regression for the seeded in-process restart boundary and the transparent in-run
+ * failover to a lower-numbered log of the same basename (now a first delivery,
+ * {@code SourcePosition.inEarlierFileOfSameLog}). The baseline kept the position gate across
  * engine recreation (spec 02.02 section 2). Two failure modes followed from it
  * (spec 02.02 section 7 FM-02.02-6, spec 02.04 section 7 FM-02.04-2):
  *
@@ -73,8 +73,6 @@ public class InRunRedeliveryVersionTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.02-6: a failover to a primary whose log has the same basename and a lower "
-            + "file sequence is classified as redelivery, so the commit-order floor stops applying")
     @DisplayName("an in-run failover to a lower-numbered log of the same name is a first delivery")
     public void failoverToALowerNumberedLogOfTheSameNameIsAFirstDelivery() {
         version(TS - 10_000, "mysql-bin.000500", 100);

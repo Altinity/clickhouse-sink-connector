@@ -694,21 +694,6 @@ public class ClickHouseBatchWriter {
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
-        // Supplied as a supplier, not a snapshot: this executor is built BEFORE
-        // the metadata-retry block below, which is exactly when a table created
-        // by DDL (rather than by auto-create) first gets its sorting key. A
-        // value captured here would still be empty, and the writer would then
-        // silently skip the UPDATE tombstone.
-        final DbWriter sortingKeySource = writer;
-        PreparedStatementExecutor preparedStatementExecutor =
-                new PreparedStatementExecutor(
-                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
-                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
-                        writer != null ? writer.getSignColumn() : null,
-                        writer != null ? writer.getVersionColumn() : null,
-                        writer != null ? writer.getDatabaseName() : databaseName,
-                        getServerTimeZone(this.config),
-                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format(
                     "*** TABLE METADATA not retrieved for " +
@@ -746,6 +731,25 @@ public class ClickHouseBatchWriter {
                 return false;
             }
         }
+        // The executor is built only now, after the metadata-retry block above:
+        // the version / sign / delete columns it binds are resolved by
+        // DbWriter.updateColumnNameToDataTypeMap(), so a writer first built
+        // while the table was missing has none of them until that refresh. An
+        // executor built before it captured null and, for a custom
+        // ReplacingMergeTree(ver, del), omitted both columns from the INSERT
+        // (stored as 0: a delete landed as a live row). Past this point the
+        // writer is non-null and its metadata is retrieved.
+        final DbWriter resolvedWriter = writer;
+        PreparedStatementExecutor preparedStatementExecutor =
+                new PreparedStatementExecutor(
+                        resolvedWriter.getReplacingMergeTreeDeleteColumn(),
+                        resolvedWriter.isReplacingMergeTreeWithIsDeletedColumn(),
+                        resolvedWriter.getSignColumn(),
+                        resolvedWriter.getVersionColumn(),
+                        resolvedWriter.getDatabaseName(),
+                        getServerTimeZone(this.config),
+                        // A supplier, not a snapshot: the sorting key is read on use.
+                        resolvedWriter::getSortingKeyColumns);
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
         // This step creates an ordered list of segments, each a Map of

@@ -32,16 +32,25 @@ enemy"), so it is held to two rules:
   runs one source process and one replica process per ClickHouse host for
   every table, optionally under `LOCK TABLES ... READ`, and compares the
   parsed `(md5, count)` pairs in `analyze_differences()`.
+- **Count tool**: `sink-connector/python/ch_sink_tools/db_compare/clickhouse_table_count.py` —
+  `build_count_sql()` is the one count statement (`FINAL`, the engine's sign
+  filter, the user where as one operand, the per-partition `FINAL` setting only
+  when exact, §3.7, §3.8).
 - **Shared**: `sink-connector/python/db/checksum_common.py` —
   `checksum_from_aggregate()`, the one definition of how the five aggregate
   values become the printed checksum. `sink-connector/python/db/mysql.py` and
   `sink-connector/python/db/clickhouse.py` hold the connection and catalog
-  helpers.
+  helpers; `sink-connector/python/ch_sink_tools/db/mysql.py` also holds `quote_identifier()` / `sql_literal()` and the
+  `--non_partitioned_tables_only` query. `sink-connector/python/ch_sink_tools/db_compare/_sql_text.py`
+  holds the ClickHouse quoting helpers and `substitute_partition_expression()`
+  (§3.12). The PostgreSQL pair is `postgres_table_checksum.py` (Tier-1 and
+  Tier-2 chunk queries) and `top_level_postgres_checksum.py` (`get_ch_checksum()`).
 - **Tests** (offline; the database layer is stubbed, no test opens a
   connection): `sink-connector/python/db_compare/tests/test_checksum_fidelity.py`,
   `sink-connector/python/db_compare/tests/mysql_table_checksum_test.py`,
   `sink-connector/python/db_compare/tests/test_table_locking.py`,
-  `sink-connector/python/db_compare/tests/test_bounded_source_lock.py`.
+  `sink-connector/python/db_compare/tests/test_bounded_source_lock.py`,
+  `sink-connector/python/db_compare/tests/test_checksum_hardening.py` (§3.12).
   Runner: `python3 -m pytest db_compare/tests` from `sink-connector/python`
   (also `python3 -m unittest discover -s db_compare/tests -t .`).
 
@@ -536,11 +545,18 @@ parallel chunks:
    is consumed numerically).
 2. The hash is split into four 32-bit words: `a = hex[0:8]`, `b = hex[8:16]`,
    `c = hex[16:24]`, `d = hex[24:32]`, each read as an unsigned integer
-   (MySQL `cast(conv(substring(h, k, 8), -16, 10) as signed)`; ClickHouse
-   `reinterpretAsInt64(reverse(unhex(substring(h, k, 8))))`) and **summed over
-   all rows** into signed 64-bit accumulators (MySQL through the session
-   variables `@a := @a + ...` with `max()` over the derived table; ClickHouse
-   `sum(...)`).
+   (MySQL `cast(conv(substring(h, k, 8), 16, 10) as unsigned)`; ClickHouse
+   `toUInt128(reinterpretAsUInt64(reverse(unhex(substring(h, k, 8)))))`) and
+   **summed over all rows** with a plain aggregate (MySQL
+   `sum(...)` over a derived table that computes the md5 once per row, kept
+   unmerged with `/*+ NO_MERGE(t) */`; ClickHouse `sum(...)`). Both sums are
+   exact for any row count: MySQL `SUM()` of an unsigned operand is
+   `DECIMAL(65,0)` and the ClickHouse sum is `UInt128`. The earlier form used
+   session variables assigned inside the SELECT list (`@a := @a + ...`, read
+   back with `max()`): MySQL documents that the evaluation order of such
+   assignments is undefined and deprecates the feature, and the signed 64-bit
+   running totals overflowed at about 2.1 billion rows (a ClickHouse
+   `Int64` sum wraps at the same point, silently).
 3. The side script prints
    `Checksum for table <db>.<table> = md5('v2#<cnt>#<a>#<b>#<c>#<d>#') count <cnt>`
    — `checksum_from_aggregate()` in `db/checksum_common.py` is the single
@@ -621,6 +637,14 @@ and per-partition `FINAL` is exact. Otherwise the setting is dropped and
 `FINAL` merges across partitions; `get_table_checksum_query()` logs the
 decision. (`test_checksum_fidelity.py::TestFinalAcrossPartitions`)
 
+The standalone count tool follows the same rule. It used to append the setting
+to every count unconditionally, so a table whose partition key is outside its
+sorting key counted a moved row twice (ClickHouse issue 49685).
+`clickhouse_table_count.py` now reads `is_in_partition_key` /
+`is_in_sorting_key` from `system.columns`, decides with the same
+`partition_key_within_sorting_key()`, and `build_count_sql()` adds the setting
+only when that is true. (`test_checksum_hardening.py::TestClickHouseCount`)
+
 ### 3.8 Deleted rows: the sign column follows the engine
 The connector creates `ReplacingMergeTree(_version, is_deleted)` tables
 (spec 08.05). ClickHouse `FINAL` drops a key whose latest version is a
@@ -639,6 +663,12 @@ that keep a sign column outside the engine definition. The old default
 `_sign` made every standalone run against a 2.x table fail with an unknown
 identifier, which is why the driver had to pass `--sign_column ""`
 explicitly. (`test_checksum_fidelity.py::TestSignColumn`)
+
+The count tool applies the same filter: it derives the sign column from the
+engine (or takes `--sign_column`) and adds `and <sign> > 0`, so the count it
+prints is the count the checksum covers. It used to count the rows a Collapsing
+engine still held with sign -1.
+(`test_checksum_hardening.py::TestClickHouseCount`)
 
 Two stale wrapper scripts that invoked the tool with flags it never had
 (`--sign_column=is_deleted --new_rmt=True --exclude-columns=[...]`) —
@@ -813,6 +843,73 @@ each statement and each chunk counts exactly the rows the operator asked for.
 The rule is checked by the builders' SQL in
 `sink-connector/python/db_compare/tests/test_where_parenthesised.py`.
 
+### 3.12 Input handling and statement hardening
+
+These rules keep the tools from comparing the wrong thing or failing in a way
+the operator cannot read. Each is checked by
+`sink-connector/python/db_compare/tests/test_checksum_hardening.py`.
+
+1. **ClickHouse types are matched by base type.** The type string is unwrapped
+   (`Nullable(...)`, `LowCardinality(...)`) and compared with the exact base
+   name. A substring test is not used: `Enum8('float' = 1, 'json' = 2)` carries
+   user text in its labels and must not be read as a float or JSON column. The
+   Enum check runs first. `Nullable(Decimal(p, s))` has a NULL `numeric_scale`
+   in `system.columns`, so the scale is parsed from the type string.
+2. **`{partition_expression}`.** The placeholder is substituted only when the
+   table has a partition expression. A `--where` that holds the placeholder for
+   a table without one raises `ValueError` naming the table, instead of sending
+   the literal text to the server.
+3. **`--table_include_list`.** Entries are stripped, an empty list or an empty
+   entry selects nothing by name rather than everything, and a name matches
+   with `fullmatch`, so `orders` does not select `orders_archive`.
+   `--ignored_columns` is checked for the same number of entries as the table
+   list before it is indexed; a mismatch is a named error. The per-database
+   override map resolves a replica database by exact key lookup, not by
+   substring.
+4. **`--non_partitioned_tables_only`.** `information_schema.partitions` holds
+   one row with a NULL `partition_name` for an unpartitioned table. The filter
+   is `having count(partition_name) = 0`, so an unpartitioned table is selected
+   and a partitioned one is not.
+5. **No MySQL user variables.** The aggregate no longer assigns `@md5sum`
+   inside the `SELECT` (evaluation order is undefined and the form is
+   deprecated). It selects `count(*)` and four column sums over a derived table
+   marked `/*+ NO_MERGE(t) */`, so the `md5` is computed once per row. Each
+   sum is `SUM` of an unsigned 32-bit slice of the hash, which MySQL returns as
+   `DECIMAL(65,0)`; the replica computes the same slices with
+   `sum(toUInt128(...))`. Neither side can wrap, so the two totals are equal
+   for equal rows at any row count (a signed 64-bit counter would have
+   overflowed near 2.1 billion rows). Per-chunk results are added as Python
+   integers.
+6. **Quoting.** Table, database, primary-key and column names are quoted on
+   both sides (backtick doubling for MySQL, `clickhouse_identifier` for
+   ClickHouse), and catalog string values are escaped literals. A name with a
+   quote, a dash or a reserved word reaches the server as one identifier.
+   `get_min_max_pk_value` returns `(None, None)` when there is no primary key.
+7. **Rendering helpers.** The row separator newline is `char(10 using ascii)`
+   on the MySQL side, which does not depend on `NO_BACKSLASH_ESCAPES`. The
+   collation check compares the number of distinct collations, so two columns
+   with the same collation are not a mismatch.
+8. **No comparable column.** If every column is excluded or unsupported, the
+   tool raises `ValueError("No comparable column in <db>.<table>...")`. It does
+   not build `concat_ws('#', )` and report a checksum of nothing.
+9. **Connections are closed.** Every connection a worker opens is closed in a
+   `finally`, on success and on error.
+10. **Count tool.** See §3.7 and §3.8: the setting is added only when per-partition
+    `FINAL` is exact, and the sign filter is applied.
+11. **PostgreSQL.** The tier-2 chunk hashes the whole primary key
+    (`concat_ws(chr(1), ...)`) and the replica side builds the same text with
+    `concat_ws(char(1), toString(...))`, so a composite key compares the same
+    on both sides (one column of it was hashed before). `--chunk_size` of 0 or
+    a negative number is a named error, not an endless loop. Integer, interval
+    and `timetz` types are rendered by explicit branches, and a
+    `timestamp without time zone` is no longer shifted as if it were UTC.
+
+Not changed, on purpose: the clamp notice still makes the verdict `DIFFERENT`
+(§3.4), the `--fail_on_different` exit code is unchanged (FM-11.02-1), and a
+WARNING a side script prints is still relayed at INFO by the driver, as §3.9
+requires. A `hex`-mode binary column already renders as `lower(hex(...))` on
+both sides.
+
 ---
 
 ## 4. Invariants Preserved
@@ -823,6 +920,12 @@ The rule is checked by the builders' SQL in
 - **Invariant I9 (Loud Failure)**: a mismatch is a `WARNING` naming both
   checksums; a column the tool cannot compare is named, never silently
   dropped.
+- **Checksum totals are exact (§3.12).** The two per-chunk sums cannot wrap on
+  either side, so equal rows give equal totals at any table size.
+- **A name is data, not SQL (§3.12).** Every identifier and catalog value the
+  tools put in a statement is quoted or escaped.
+- **A type is its base type (§3.12).** Enum labels and other user text never
+  change how a column is rendered.
 
 ---
 
@@ -969,6 +1072,20 @@ connect to a database.
 - `test_checksum_fidelity.py::TestRemovedDeadPaths` — §3.10: no
   `CREATE FUNCTION` statement in the replica script, no count pre-check
   before the aggregate, `--exclude_columns` is `nargs='+'` on both sides.
+- `sink-connector/python/db_compare/tests/test_checksum_hardening.py` — §3.12,
+  one class per rule: `TestClickHouseTypeClassification` and
+  `TestNullableDecimalScale` (Enum labels, Nullable Decimal scale),
+  `TestPartitionPlaceholder`, `TestTableIncludeList`, `TestIgnoredColumns`,
+  `TestDatabaseOverrideMap`, `TestNonPartitionedTablesOnly`,
+  `TestAggregateSql` (no `@` variable, exact sums, `NO_MERGE`),
+  `TestIdentifierQuoting`, `TestConnectionsAreClosed`,
+  `TestNoComparableColumns`, `TestClickHouseCount`,
+  `TestSideWarningRelayLevel`, `TestNewlineAndHexRendering`,
+  `TestCollationComparison`, `TestPostgresTier2CompositeKey`,
+  `TestPostgresChunkSize`, `TestPostgresTypeChecks`, `TestE2eRepoRoot`.
+  Run against the code before these changes, the file fails on the SQL,
+  matching and `chunk_size` cases (the `chunk_size` 0 case does not
+  terminate).
 
 ---
 
@@ -1145,4 +1262,31 @@ connect to a database.
   - **RTO**: one re-run after the ClickHouse upgrade or the `--where` change.
   - **Test**: `sink-connector/python/db_compare/tests/test_checksum_timezone.py::TestClickHouse258Probe`.
 
-Summary: 15 failure modes. DEFECT label on FM-11.02-1, -4, -5, -9; GAP test label on FM-11.02-4, -5, -8, -9. FM-11.02-11 to -15 are later additions with unit tests (counted in the lines above, not in the DEFECT/GAP totals).
+- **FM-11.02-16 A table, partition expression or column list cannot be compared as asked**
+  - **Trigger**: `--where` holds `{partition_expression}` for a table with no partition expression; every column of a table is excluded or unsupported; `--ignored_columns` has fewer entries than the table list; `--chunk_size` is 0 or negative.
+  - **Behaviour**: the tool raises a named `ValueError` or argument error (table and cause in the text). It does not send the placeholder to the server, hash an empty row, or index past the list, and a zero chunk size no longer loops.
+  - **Detection**: the error is logged by the worker and the run exits non-zero.
+  - **Blast radius**: the one table, or the one invocation for an argument error. No data is changed.
+  - **Recovery**: fix the option or exclude the table, then re-run.
+  - **RTO**: one re-run.
+  - **Test**: `test_checksum_hardening.py::TestPartitionPlaceholder`, `TestNoComparableColumns`, `TestIgnoredColumns`, `TestPostgresChunkSize`.
+
+- **FM-11.02-17 An include list or override selects more or fewer tables than named**
+  - **Trigger**: an include-list entry has surrounding blanks, the list is empty, or an entry is a prefix of another table name; a database override key is a substring of another database name.
+  - **Behaviour**: entries are stripped and matched with `fullmatch`; an empty list selects nothing by name; the override is an exact lookup. Before this, a prefix matched extra tables and an override could point at the wrong replica database.
+  - **Detection**: the run's table list in the log.
+  - **Blast radius**: which tables are compared, not their values.
+  - **Recovery**: correct the list; a regular expression that was relied on as a prefix must now end in `.*`.
+  - **RTO**: one re-run.
+  - **Test**: `test_checksum_hardening.py::TestTableIncludeList`, `TestDatabaseOverrideMap`.
+
+- **FM-11.02-18 A side-script WARNING is relayed at INFO (kept as specified)**
+  - **Trigger**: a side script logs a mismatch at WARNING; the driver relays the line.
+  - **Behaviour**: the relay level stays INFO as §3.9 requires. The verdict and the exit code carry the result, not the relay level, so `--fail_on_different` is unaffected.
+  - **Detection**: the table's `Checksum difference` verdict.
+  - **Blast radius**: log level only.
+  - **Recovery**: none needed.
+  - **RTO**: none.
+  - **Test**: `test_checksum_hardening.py::TestSideWarningRelayLevel`.
+
+Summary: 18 failure modes. DEFECT label on FM-11.02-1, -4, -5, -9; GAP test label on FM-11.02-4, -5, -8, -9. FM-11.02-11 to -18 are later additions with unit tests (counted in the lines above, not in the DEFECT/GAP totals).

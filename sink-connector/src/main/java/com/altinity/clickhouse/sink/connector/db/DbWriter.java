@@ -347,6 +347,14 @@ public class DbWriter extends BaseDbWriter {
             return;
         }
 
+        // Re-derived from scratch on every call: this also runs on a metadata
+        // refresh, where a table dropped and recreated with another engine must
+        // not keep the previous engine's version / sign / delete columns.
+        this.signColumn = null;
+        this.versionColumn = null;
+        this.replacingMergeTreeDeleteColumn = null;
+        this.replacingMergeTreeWithIsDeletedColumn = false;
+
         String engineName = this.engine.getEngine();
 
         if (isReplacingMergeTreeEngine(engineName)) {
@@ -565,9 +573,14 @@ public class DbWriter extends BaseDbWriter {
     /**
      * Updates the column name to data type map for the table,
      * typically after the schema has changed or the table was
-     * newly created. Also updates the table engine details.
+     * newly created. Also updates the table engine details, the sorting key
+     * and the engine-specific version / sign / delete columns.
      *
      * @throws SQLException If a database access error occurs.
+     * @throws IllegalStateException If the refreshed table is a ReplacingMergeTree
+     *         the connector cannot version (see
+     *         {@link #requireReplacingMergeTreeColumns}); the writer then reports
+     *         its metadata as not retrieved.
      */
     public void updateColumnNameToDataTypeMap() throws SQLException {
         this.columnNameToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(
@@ -579,6 +592,23 @@ public class DbWriter extends BaseDbWriter {
         // than by auto-create, so leaving it stale here means the writer sees
         // an empty sorting key and silently skips the UPDATE tombstone.
         this.sortingKeyColumns = dbMetadata.getSortingKeyColumns(this.conn, database, tableName);
+        // The version / sign / delete columns derive from the engine, so they
+        // must be refreshed with it. A writer built while the table was missing
+        // (or its catalog read failed) has an unresolved engine and so no such
+        // columns; without this a retry resolved the engine but left them unset,
+        // and a custom ReplacingMergeTree(ver, del) then had both omitted from
+        // the INSERT and stored as 0 -- a delete landing as a live row.
+        try {
+            configureEngineSpecificColumns();
+        } catch (IllegalStateException e) {
+            // The constructor refuses such a table by throwing before any
+            // caller can cache the writer. Here the writer is already cached,
+            // so also make it report unresolved metadata: the next batch then
+            // refreshes (and refuses) again instead of writing with columns it
+            // cannot bind.
+            this.engine = null;
+            throw e;
+        }
     }
 
     /**

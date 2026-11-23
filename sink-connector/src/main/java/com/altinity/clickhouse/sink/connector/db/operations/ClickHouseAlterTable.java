@@ -9,8 +9,11 @@ import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Handles ALTER TABLE operations for ClickHouse to support schema
@@ -71,7 +74,7 @@ public class ClickHouseAlterTable
 
         StringBuilder alterTableSyntax = new StringBuilder();
         alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE)
-                .append(" ").append(tableName).append(" ");
+                .append(" `").append(tableName).append("` ");
 
         for (Map.Entry<String, String> entry
                 : colNameToDataTypesMap.entrySet()) {
@@ -80,14 +83,17 @@ public class ClickHouseAlterTable
                 alterTableSyntax.append(
                                 ClickHouseDbConstants.ALTER_TABLE_ADD_COLUMN)
                         .append(" ");
+                alterTableSyntax.append("`").append(entry.getKey())
+                        .append("`").append(" ").append(entry.getValue())
+                        .append(",");
             } else {
+                // DROP COLUMN takes the column name only; a data type after it is a syntax error.
                 alterTableSyntax.append(
                                 ClickHouseDbConstants.ALTER_TABLE_DELETE_COLUMN)
                         .append(" ");
+                alterTableSyntax.append("`").append(entry.getKey())
+                        .append("`").append(",");
             }
-            alterTableSyntax.append("`").append(entry.getKey())
-                    .append("`").append(" ").append(entry.getValue())
-                    .append(",");
         }
         alterTableSyntax.deleteCharAt(
                 alterTableSyntax.lastIndexOf(","));
@@ -115,10 +121,25 @@ public class ClickHouseAlterTable
                            ClickHouseSinkConnectorConfig config) throws SQLException {
 
         List<Field> missingFieldsInCH = new ArrayList<>();
-        // Identify columns that are missing in ClickHouse.
+        // Identify columns that are missing in ClickHouse. Fast-path exact-case
+        // hits (the common hot path) so we avoid allocating a lowercase Set on
+        // every batch, falling back to case-insensitive matching only on a miss
+        // (matching GroupInsertQueryWithBatchRecords): a record column that
+        // differs only in case is the same column, and ADD COLUMN for it would
+        // create a duplicate.
+        Set<String> knownColumnsLower = null;
         for (Field f : modifiedFields) {
             String colName = f.name();
-            if (!columnNameToDataTypeMap.containsKey(colName)) {
+            if (columnNameToDataTypeMap.containsKey(colName)) {
+                continue;
+            }
+            if (knownColumnsLower == null) {
+                knownColumnsLower = new HashSet<>(columnNameToDataTypeMap.size() * 2);
+                for (String known : columnNameToDataTypeMap.keySet()) {
+                    knownColumnsLower.add(known.toLowerCase(Locale.ROOT));
+                }
+            }
+            if (!knownColumnsLower.contains(colName.toLowerCase(Locale.ROOT))) {
                 missingFieldsInCH.add(f);
             }
         }
@@ -146,7 +167,15 @@ public class ClickHouseAlterTable
                     metadata.executeSystemQuery(connection,
                             alterTableQuery);
                 } catch (Exception e) {
-                    log.error(" **** ALTER TABLE EXCEPTION ", e);
+                    // Surface the failure to the caller (both callers catch and re-read the
+                    // column map, so a column added concurrently by another worker is still
+                    // picked up) instead of reporting success after a failed ALTER.
+                    log.error(" **** ALTER TABLE EXCEPTION for table `{}` ", tableName, e);
+                    if (e instanceof SQLException) {
+                        throw (SQLException) e;
+                    }
+                    throw new SQLException("ALTER TABLE failed for table `" + tableName + "`: "
+                            + e.getMessage(), e);
                 }
             }
         }

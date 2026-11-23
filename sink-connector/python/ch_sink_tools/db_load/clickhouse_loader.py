@@ -389,8 +389,9 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
             f"/{args.mysql_source_database}@*.sql"
         schema_files = glob.glob(schema_file_wildcard)
         if len(schema_files) == 0:
-            logging.error("Cannot find schema files")
-            return
+            # callers unpack (timezone, schema_map): returning None crashed them with an unrelated TypeError
+            raise FileNotFoundError(f"Cannot find MySQL Shell schema files matching {schema_file_wildcard}: check "
+                                    f"--dump_dir and --mysql_source_database")
 
         for file in schema_files:
             if not re.search(r'@[^.]+\.sql', file):
@@ -600,7 +601,24 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
     return column_list
 
 
-def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
+MYDUMPER_ESCAPE_FILTER = r"""import re, sys
+escape = re.compile(rb'\\(.)')
+unescaped = {b'"': b'""', b"'": b"'"}
+write = sys.stdout.buffer.write
+for line in sys.stdin.buffer:
+    write(escape.sub(lambda m: unescaped.get(m.group(1), m.group(0)), line))
+"""
+
+
+def mydumper_csv_unescape_filter():
+    """Shell word(s) of the filter that turns mydumper's backslash escapes into ClickHouse CSV quoting: \\" becomes
+    "" and \\' becomes '. The text is read as backslash pairs from left to right, so an escaped backslash (\\\\) is
+    one unit that stays as written and a quote after it is a real quote: "abc\\\\",x keeps its closing quote. The old
+    ``sed 's/\\\\"/""/g'`` took the backslash of that pair as an escape for the quote and corrupted the field."""
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(MYDUMPER_ESCAPE_FILTER)}"
+
+
+def load_data(args, timezone,schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     if args.mysqlshell:
         load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=dry_run)
@@ -629,7 +647,7 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
             structure = columns.replace(
                 ",", " Nullable(String),")+" Nullable(String)"
             secure_option = "--secure" if clickhouse_secure else ""
-            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client {config_file_option} --use_client_time_zone 1 -h {clickhouse_host} --port {clickhouse_port} {secure_option} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{clickhouse_user} {password_option} -mn """
+            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | {mydumper_csv_unescape_filter()} | clickhouse-client {config_file_option} --use_client_time_zone 1 -h {clickhouse_host} --port {clickhouse_port} {secure_option} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{clickhouse_user} {password_option} -mn """
             execute_load(cmd)
 
 
@@ -759,7 +777,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
             if args.truncate_tables:
                 if not args.dry_run:
                     with get_connection(args, clickhouse_user, clickhouse_password) as conn:
-                       clickhouse_execute_conn(conn, f"truncate table {schema}.{table_name}") 
+                        clickhouse_execute_conn(conn, truncate_table_statement(ch_schema, table_name))
             for data_file in data_files:
                 # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
                 column_metadata_list = schema_map[schema+"."+table_name]
@@ -792,15 +810,47 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                 cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  --max_partitions_per_insert_block=1000 -h {clickhouse_host} --port {clickhouse_port} {secure_option} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
-        for future in concurrent.futures.as_completed(futures):
-            if future.exception() is not None:
-                raise future.exception()
+        wait_for_loads(futures)
+
+
+def quote_identifier(name):
+    """Backtick-quote a ClickHouse identifier."""
+    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
+
+
+def truncate_table_statement(clickhouse_database, table_name):
+    """TRUNCATE of ``table_name`` in the TARGET ClickHouse database (--clickhouse_database). The MySQL source schema
+    name is never used here: it names the database the dump came from, which can be a different, live ClickHouse
+    database."""
+    # DESTRUCTIVE: --truncate_tables empties the target table before reload; the database is --clickhouse_database
+    return f"TRUNCATE TABLE {quote_identifier(clickhouse_database)}.{quote_identifier(table_name)}"
+
+
+def wait_for_loads(futures):
+    """Raise the first load failure as soon as it happens. The loads still queued are cancelled (only those already
+    running finish), so a failed load is not reported after every other table has been loaded."""
+    for future in concurrent.futures.as_completed(futures):
+        error = future.exception()
+        if error is not None:
+            for pending in futures:
+                pending.cancel()
+            raise error
 
 
 def check_program_exists(name):
     p = Popen(['/usr/bin/which', name], stdout=PIPE, stderr=PIPE)
     p.communicate()
     return p.returncode == 0
+
+
+def check_dependencies(args):
+    """clickhouse-client is always required; zstd only for a util.dumpSchemas (--mysqlshell) load, since a mydumper
+    load reads gzip. (``assert args.mysqlshell and ...`` failed every mydumper run.)"""
+    assert check_program_exists(
+        'clickhouse-client'), "clickhouse-client should be in the PATH"
+    if args.mysqlshell:
+        assert check_program_exists(
+            'zstd'), "zstd should be in the PATH for util.dumpSchemas load"
 
 
 def main():
@@ -892,11 +942,7 @@ def main():
         config_file = args.clickhouse_config_file
         (clickhouse_user, clickhouse_password) = resolve_credentials_from_config(config_file)
 
-    # check dependencies
-    assert check_program_exists(
-        'clickhouse-client'), "clickhouse-client should be in the PATH"
-    assert args.mysqlshell and check_program_exists(
-        'zstd'), "zstd should be in the PATH for util.dumpSchemas load"
+    check_dependencies(args)
 
     if schema:
         (timezone, schema_map) = load_schema(args,  clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=args.dry_run,

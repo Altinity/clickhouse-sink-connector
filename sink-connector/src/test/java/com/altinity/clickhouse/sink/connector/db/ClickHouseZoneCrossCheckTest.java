@@ -139,6 +139,35 @@ public class ClickHouseZoneCrossCheckTest {
     }
 
     @Test
+    @DisplayName("a server zone that is an alias of the configured zone (US/Central vs America/Chicago) is not a mismatch")
+    void equivalentServerZoneNameIsNotReported() throws SQLException {
+        var findings = ClickHouseZoneCrossCheck.findMismatches("America/Chicago",
+                source("US/Central", List.of(), null));
+        assertTrue(findings.isEmpty(), findings.toString());
+
+        var reverse = ClickHouseZoneCrossCheck.findMismatches("US/Central",
+                source("America/Chicago", List.of(), null));
+        assertTrue(reverse.isEmpty(), reverse.toString());
+    }
+
+    @Test
+    @DisplayName("a server zone with different rules is still one finding naming both zones")
+    void differentServerZoneIsStillReported() throws SQLException {
+        var findings = ClickHouseZoneCrossCheck.findMismatches("America/Chicago",
+                source("Europe/Berlin", List.of(), null));
+        assertEquals(1, findings.size(), findings.toString());
+        assertTrue(findings.get(0).contains("'Europe/Berlin'"), findings.get(0));
+    }
+
+    @Test
+    @DisplayName("the column scan excludes system databases and the inner tables of materialized views")
+    void columnScanExcludesInnerTables() {
+        String sql = ClickHouseZoneCrossCheck.JdbcZoneMetadataSource.DATETIME_COLUMNS_SQL;
+        assertTrue(sql.contains("c.table NOT LIKE '.inner%'"), sql);
+        assertTrue(sql.contains("c.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')"), sql);
+    }
+
+    @Test
     @DisplayName("an unreadable server zone throws so the caller can WARN; it is not a finding")
     void unreadableServerZoneThrows() {
         assertThrows(SQLException.class, () -> ClickHouseZoneCrossCheck.findMismatches("America/Chicago",

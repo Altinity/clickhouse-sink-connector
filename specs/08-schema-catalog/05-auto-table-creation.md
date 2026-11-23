@@ -244,6 +244,25 @@ wildcard override that does not apply to this table -- and a ClickHouse-only
 column a user added by hand is therefore never inspected or altered, even
 when it happens to carry the exact name a generated ALIAS column would have.
 
+### 3.4 Quoted identifiers and column removal
+
+Every identifier the schema operations put into DDL is backtick-quoted, so a reserved word or a name with a dot or dash
+(`order`, `select`, `my-history.db`) is accepted by ClickHouse:
+
+- `ClickHouseAlterTable.createAlterTableSyntax` writes ``ALTER TABLE `t` add column `c` Type`` and
+  ``ALTER TABLE `t` drop column `c` ``.
+- `ClickHouseAutoCreateTable.createTableSyntax` writes ``PRIMARY KEY(`a`,`b`) ORDER BY(`a`,`b`)``.
+- `ClickHouseAutoCreateTable.createHistoryDatabase` writes ``CREATE DATABASE IF NOT EXISTS `db` ``.
+
+`ClickHouseDbConstants.ALTER_TABLE_DELETE_COLUMN` is `drop column`. The earlier text `delete column` is not ClickHouse
+syntax, and `DROP COLUMN` takes no data type after the name, so the REMOVE form emits the name only. No connector code path
+requests REMOVE; the schema-evolution path only adds columns.
+
+`ClickHouseAlterTable.alterTable` decides that a record column is missing by a case-insensitive comparison with the
+ClickHouse columns, as the column refresh does. A record column that differs from an existing one only in case is not added
+a second time. A failed `ALTER TABLE` is rethrown as the `SQLException`; it is no longer logged and reported as done. Both
+callers already catch `Exception`, so the failure reaches the existing error path.
+
 ---
 
 ## 4. Invariants Preserved
@@ -255,6 +274,11 @@ when it happens to carry the exact name a generated ALIAS column would have.
 ---
 
 ## 5. Verification Criteria
+- `ClickHouseSchemaOpsQuotingTest.deleteColumnConstantIsDropColumn()`,
+  `.addQuotesTableAndColumns()`, `.removeEmitsValidDropColumn()`,
+  `.caseInsensitiveColumnComparison()`, `.missingColumnIsAddedQuoted()`,
+  `.failedAlterIsSurfaced()`, `.primaryKeyAndOrderByAreQuoted()` and
+  `.createDatabaseQuotesName()` cover section 3.4 with a recording `Connection` double and no database.
 - `ClickHouseAutoCreateTableTest.testKeylessTableOrdersByAllColumns()` —
   `createTableSyntax(null, "audit", "db", fields a,b,...)` contains no
   `ORDER BY tuple()`, its `ORDER BY` names `a` and `b`, and no `PRIMARY KEY`
@@ -318,6 +342,13 @@ when it happens to carry the exact name a generated ALIAS column would have.
 ---
 
 ## 6. Failure Modes & Recovery
+- **FM-08.05-7 Unquoted identifier or failed ALTER reported as success**
+  - **Trigger**: a source table or column named like a ClickHouse keyword, or a ClickHouse user without the ALTER grant.
+  - **FIXED** in this revision (section 3.4): identifiers are quoted and a failed `ALTER TABLE` is rethrown.
+  - **Detection**: the `SQLException` from ClickHouse reaches the caller's error path and the batch fails loudly.
+  - **Recovery**: grant `ALTER` on the table, or rename the colliding column in the target; the batch retries.
+  - **RTO**: one batch retry interval after the grant is applied.
+  - **Test**: `ClickHouseSchemaOpsQuotingTest.failedAlterIsSurfaced()`, `.primaryKeyAndOrderByAreQuoted()`.
 Auto-create runs once per writer build, inside the `DbWriter` constructor. When it fails, nothing retries it for the life of the process (spec 08.01 FM-08.01-5); when it succeeds after an out-of-band drop, it silently builds an empty replica; and the override contradiction it is documented to halt on is neither reachable for an existing table nor classified as terminal.
 
 - **FM-08.05-1 A transient failure during auto-create is never retried**

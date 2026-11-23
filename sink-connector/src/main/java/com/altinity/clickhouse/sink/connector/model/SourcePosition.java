@@ -38,18 +38,85 @@ public final class SourcePosition implements Comparable<SourcePosition> {
     private final long row;
     /** Completed events since the restart anchor; -1 denotes an envelope coordinate. */
     private final long event;
+    /**
+     * Transaction number of the event's MySQL GTID (the last {@code :}-separated
+     * segment of {@code source.gtid}), or {@link #NO_GTID}. Metadata about the
+     * transaction at this position, NOT part of the position's identity: it takes
+     * no part in {@link #compareTo}, {@link #equals} or {@link #hashCode}.
+     */
+    private final long gtidTransaction;
+
+    /** {@link #gtidTransaction()} of a position whose event carries no GTID. */
+    public static final long NO_GTID = -1L;
 
     private SourcePosition(long fileSequence, String file, long position, long row) {
-        this(fileSequence, file, position, row, -1L);
+        this(fileSequence, file, position, row, -1L, NO_GTID);
     }
 
     private SourcePosition(long fileSequence, String file, long position, long row, long event) {
+        this(fileSequence, file, position, row, event, NO_GTID);
+    }
+
+    private SourcePosition(long fileSequence, String file, long position, long row, long event,
+                           long gtidTransaction) {
         this.event = event;
         this.fileSequence = fileSequence;
         this.file = file;
         this.filePrefix = fileSequence >= 0 ? file.substring(0, file.lastIndexOf('.')) : file;
         this.position = position;
         this.row = row;
+        this.gtidTransaction = gtidTransaction;
+    }
+
+    /**
+     * The same position, carrying the GTID transaction number of its event.
+     *
+     * <p>The lightweight dispatch loop passes only a timestamp and a position to the
+     * version sequence, while the {@code _version} of a GTID row is built from the
+     * GTID transaction number (spec 02.01 section 3.1, path 1). Carrying the number on
+     * the position lets the sequence keep GTID versions in commit order inside one
+     * effective millisecond (FM-02.01-2) and keep rows without a GTID above earlier
+     * GTID rows (FM-02.01-1) -- spec 02.01 section 3.1.2.</p>
+     *
+     * @param transaction the transaction number ({@code >= 0}), or {@link #NO_GTID}
+     * @return a position equal to this one that carries {@code transaction}
+     */
+    public SourcePosition withGtidTransaction(long transaction) {
+        long normalized = transaction >= 0 ? transaction : NO_GTID;
+        if (normalized == gtidTransaction) {
+            return this;
+        }
+        return new SourcePosition(fileSequence, file, position, row, event, normalized);
+    }
+
+    /**
+     * @return the GTID transaction number of the event at this position, or
+     *         {@link #NO_GTID} when it carries none
+     */
+    public long gtidTransaction() {
+        return gtidTransaction;
+    }
+
+    /**
+     * Whether this position lies in an EARLIER-numbered file of the same binary log
+     * than {@code mark}: same basename, both names numerically suffixed, and a lower
+     * file sequence ({@code mysql-bin.000020} against {@code mysql-bin.000500}).
+     *
+     * <p>Inside one engine run Debezium reads the log forward, so this happens only
+     * when the log itself restarted lower: a failover where the binlog client
+     * reconnects to a new primary whose log has the same basename and a lower number,
+     * or {@code RESET MASTER}. The events are new commits, not redeliveries, so the
+     * version sequence classifies them as first deliveries and moves its mark to the
+     * new log (spec 01.02 section 3.1.1, spec 02.02 section 3.1, FM-02.02-6). Engine
+     * restarts clear the mark before replay, so an offset rewind never reaches this
+     * predicate. A position earlier in the SAME file is still a redelivery.</p>
+     *
+     * @param mark the high-water position, not null
+     * @return true if this position is in a lower-numbered file of the same log
+     */
+    public boolean inEarlierFileOfSameLog(SourcePosition mark) {
+        return sameLog(mark) && fileSequence >= 0 && mark.fileSequence >= 0
+                && fileSequence < mark.fileSequence;
     }
 
     /**
@@ -253,8 +320,9 @@ public final class SourcePosition implements Comparable<SourcePosition> {
 
     @Override
     public String toString() {
-        return file.isEmpty()
+        String coordinates = file.isEmpty()
                 ? "lsn=" + position
                 : file + ":" + position + (event >= 0 ? ":event=" + event : "") + ":" + row;
+        return gtidTransaction >= 0 ? coordinates + ":gtid=" + gtidTransaction : coordinates;
     }
 }

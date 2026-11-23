@@ -6,14 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 
 /**
- * Failure modes of the GTID version path (spec 02.01 section 7):
+ * Regressions for the former failure modes of the GTID version path (spec 02.01
+ * section 7), fixed by the cross-domain rules of spec 02.01 section 3.1.2: the
+ * version sequence keeps every first delivery above the highest final version in
+ * either domain, moving a GTID row's timestamp field forward by the least amount
+ * needed and carrying a row without a GTID above earlier snowflake versions.
  *
  * <ul>
  *   <li>FM-02.01-1: rows without a GTID (anonymous transactions under
@@ -39,6 +42,7 @@ public class GtidVersionTieBreakTest {
         VersionSequencer.sequenceHighWaterPosition = null;
         VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
         VersionSequencer.sequenceMaxSourceTs = 0L;
+        VersionSequencer.seededVersionFloor = 0L;
     }
 
     private static ClickHouseStruct at(long sourceTsMs, Long gtid, long pos) {
@@ -62,8 +66,6 @@ public class GtidVersionTieBreakTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.01-1: a row without a GTID is versioned in the sequence domain, below every "
-            + "snowflake version written while GTIDs were on, so it can never supersede them")
     @DisplayName("a later row without a GTID must rank above an earlier GTID row of the same key")
     public void laterRowWithoutGtidRanksAboveEarlierGtidRow() {
         long withGtid = versionOf(at(TS, 500L, 100));
@@ -76,8 +78,6 @@ public class GtidVersionTieBreakTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.01-2: inside one clamped millisecond the snowflake compares the low 22 bits "
-            + "of the GTID transaction number, which wrap every 4 194 304 transactions")
     @DisplayName("a GTID transaction number wrap inside one clamped millisecond keeps commit order")
     public void gtidWrapInsideAClampedMillisecondKeepsCommitOrder() {
         // Restart on a lagging source: the floor is seeded ahead of the source clock.
@@ -92,8 +92,6 @@ public class GtidVersionTieBreakTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.01-2: inside one clamped millisecond transactions of different server UUIDs "
-            + "are ordered by their unrelated transaction numbers")
     @DisplayName("after a failover, the new primary's transaction clamped into the old one's millisecond keeps commit order")
     public void newServerUuidInsideAClampedMillisecondKeepsCommitOrder() {
         // The new primary's binlog: the last transaction replicated from the old

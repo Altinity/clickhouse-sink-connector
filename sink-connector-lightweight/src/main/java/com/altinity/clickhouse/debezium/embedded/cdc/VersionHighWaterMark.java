@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -86,6 +87,15 @@ public final class VersionHighWaterMark {
 
     /** A decoded floor more than this far past the connector clock is not a timestamp. */
     static final long PLAUSIBLE_FUTURE_MS = 24L * 60 * 60 * 1000;
+
+    /**
+     * How far past the connector clock a decoded floor is still taken for a clock step
+     * and seeded as is (FM-02.02-4). Beyond it the value is not a sequence-domain
+     * timestamp: either a snowflake-domain mark (spec 02.02 section 3.5.1) -- in 2026
+     * a snowflake value decodes about seven years ahead as a sequence value, and the
+     * gap grows each year -- or a sentinel.
+     */
+    static final long MAX_FUTURE_MARK_MS = 365L * 24 * 60 * 60 * 1000;
 
     /** Attempts and delay for persisting the horizon before failing loudly. */
     static final int DEFAULT_WRITE_ATTEMPTS = 30;
@@ -319,8 +329,13 @@ public final class VersionHighWaterMark {
     }
 
     /**
-     * The seed for this start: {@code floorDiv(V_max, 1e6) + 1} when a plausible mark
-     * row exists, otherwise the connector clock plus {@value #CLOCK_SEED_HEADROOM_MS} ms.
+     * The seed for this start: {@code floorDiv(V_max, 1e6) + 1} when a mark row decodes
+     * to a timestamp no more than {@value #MAX_FUTURE_MARK_MS} ms past the connector
+     * clock (a mark ahead of the clock after a clock step is still the seed: the floor
+     * never drops below rows already written, FM-02.02-4); the snowflake decoding of
+     * a mark in the snowflake domain, which also becomes the sequence's version floor
+     * (spec 02.02 section 3.5.1); otherwise the connector clock plus
+     * {@value #CLOCK_SEED_HEADROOM_MS} ms.
      *
      * <p>Exactly two statements are issued, both against {@value #TABLE_NAME}:
      * {@link #ensureTable()} and {@link #load()}. No target table is read -- a
@@ -341,6 +356,37 @@ public final class VersionHighWaterMark {
             long candidate = sequenceFloor(persisted);
             if (isPlausibleFloor(candidate, now)) {
                 return new Seed(candidate, true, "the persisted high-water version " + persisted);
+            }
+            if (candidate >= PLAUSIBLE_FLOOR_MIN_MS && candidate <= now + MAX_FUTURE_MARK_MS) {
+                // A clock step: the previous run versioned rows (and moved the horizon)
+                // ahead of this clock. Those rows are in ClickHouse at or below the
+                // mark, so a lower floor would leave them winning under FINAL; a
+                // too-high floor only clamps the first rows until the source clock
+                // catches up (FM-02.02-4, spec 02.02 section 3.5 (2)).
+                log.error("The persisted high-water version {} in {} decodes to floor {} ms, {} ms ahead of "
+                        + "the connector clock (a clock step on the source or connector host). Seeding the "
+                        + "floor from it anyway: rows are clamped to it until the source clock passes it, "
+                        + "which keeps every row already written below the new run. Check NTP on both hosts.",
+                        persisted, qualifiedTableName(), candidate, candidate - now);
+                return new Seed(candidate, true, "the persisted high-water version " + persisted
+                        + " (" + (candidate - now) + " ms ahead of the connector clock)");
+            }
+            long snowflakeFloor = SnowFlakeId.floorAbove(persisted);
+            if (candidate > now + MAX_FUTURE_MARK_MS && isPlausibleFloor(snowflakeFloor, now)) {
+                // The mark lies in the snowflake domain: the previous run carried rows
+                // without a GTID above GTID versions and covered them (spec 02.02
+                // section 3.5.1). Decoded as a sequence value it is years ahead, and
+                // seeding that as a millisecond floor would push every GTID version
+                // years ahead in turn. Seed the millisecond floor from its snowflake
+                // decoding (above every GTID version it covers) and hand the mark
+                // itself to the sequence as a version floor (above every row).
+                VersionSequencer.raiseSeededVersionFloor(persisted);
+                log.warn("The persisted high-water version {} in {} lies in the snowflake (GTID) version "
+                        + "domain; seeding the floor to {} ms from its snowflake timestamp and versioning "
+                        + "every first delivery above {} (spec 02.02 section 3.5.1)", persisted,
+                        qualifiedTableName(), snowflakeFloor, persisted);
+                return new Seed(snowflakeFloor, true, "the persisted high-water version " + persisted
+                        + " (snowflake domain)");
             }
             log.error("The persisted high-water version {} in {} decodes to floor {} ms, which is "
                     + "not a plausible timestamp; ignoring it and seeding from the connector clock",

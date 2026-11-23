@@ -303,7 +303,14 @@ def binlog_position_key(file_name, position):
 
 
 def mysql_binlog_position():
-    row = mysql_query("SHOW MASTER STATUS")[0]
+    version = str(mysql_query("SELECT @@version")[0][0])
+    parts = version.split("-", 1)[0].split(".")
+    try:
+        modern = (int(parts[0]), int(parts[1])) >= (8, 2)
+    except (IndexError, ValueError):
+        modern = False
+    stmt = "SHOW BINARY LOG STATUS" if modern else "SHOW MASTER STATUS"
+    row = mysql_query(stmt)[0]
     return row[0], int(row[1])
 
 

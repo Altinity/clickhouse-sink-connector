@@ -70,6 +70,16 @@ the same gap and overlap rules applied in the source zone (reported as above).
 `MicroTimestampConverter` and `TimestampConverter` use one helper for this, so
 the two converters never disagree on the same digits.
 
+`io.debezium.time.NanoTimestamp` (an `INT64` of nanoseconds, declared `DateTime64(9, 'UTC')` by the DDL
+mapping) follows the same encoding. `ClickHouseDataTypeMapper.convert` renders it through `nanoTimestampText`
+as a nine-digit `yyyy-MM-dd HH:mm:ss.SSSSSSSSS` literal instead of binding the raw epoch count: the digits are the
+source wall time read as UTC, converted through the source zone when it differs from the column zone, with
+floor semantics before the epoch and the range policy applied outside the `DateTime64` range
+(`ClickHouseDataTypeMapperByteBufferNanoTest.nanoTimestampIsConverted()`, `nanoTimestampBeforeEpoch()`,
+`nanoTimestampHonoursSourceZone()`, `nanoTimestampHasADataTypeMapping()`). The mapper's WKB and
+variable-scale-decimal branches read a `ByteBuffer` through `duplicate()`, so the caller's shared buffer
+position and limit are never moved.
+
 #### 3.1.2 Both zone settings are mandatory: an unset zone setting refuses the start
 Before this rule the two settings resolved asymmetrically and both resolved implicitly: an empty
 `clickhouse.datetime.timezone` fell back to the ClickHouse server zone (`SELECT timezone()`), an empty
@@ -218,12 +228,13 @@ This rule refuses values that today fail only per batch or fall back silently. I
 **Startup cross-check.** At start, `ClickHouseZoneCrossCheck` (`sink-connector/.../db/ClickHouseZoneCrossCheck.java`)
 runs from two startup paths: the embedded engine (`DebeziumChangeEventCapture.setup`) and the Kafka Connect task
 (`ClickHouseSinkTask.start`, task 0 only, so N tasks do not repeat the same lines). It reads `SELECT timezone()` and the explicit zones of existing DateTime/DateTime64 columns (`system.columns`, outside
-`system` and `information_schema`). It logs one ERROR per mismatch. The reference zone is the configured `clickhouse.datetime.timezone` (always set, §3.1.2). A column in a view is not reported: a view's type is the zone its SELECT renders (`show_replica_status.utc_time` is `DateTime('UTC')` by design), and the connector never writes a view (`system.tables.engine` identifies views). A server zone that
+`system` and `information_schema`; the `.inner%` storage tables of materialized views are excluded by `c.table NOT LIKE '.inner%'`). It logs one ERROR per mismatch. The reference zone is the configured `clickhouse.datetime.timezone` (always set, §3.1.2). A column in a view is not reported: a view's type is the zone its SELECT renders (`show_replica_status.utc_time` is `DateTime('UTC')` by design), and the connector never writes a view (`system.tables.engine` identifies views). A server zone that
 differs from the reference is one finding; a column whose declared zone differs from the reference is one finding
 naming the column. A column with no declared zone follows the server and is not reported. The check never refuses:
 when it cannot run (no connection, a query error, an empty server zone) it logs a WARN and startup continues. Zones
-are compared as strings, so an alias (`US/Central` against `America/Chicago`) is reported; that is deliberately
-conservative. Existing tables are not altered by this check or by any other part of §3.1.6: a DDL type is only set at
+are compared by rules, not by text (`sameZoneName`): two names that resolve to equal `ZoneId` rules agree, so the
+alias `US/Central` against `America/Chicago` is not reported. A name that is not a Java zone id is compared as
+text only, and a genuinely different zone is still reported. Existing tables are not altered by this check or by any other part of §3.1.6: a DDL type is only set at
 creation (see FM-07.03-12 and `doc/timezone.md`).
 
 **Kafka Connect.** `ClickHouseSinkConnectorConfig` declares both zone keys with no default and refuses an unset or `SERVER` `database.connectionTimeZone` and an unset `clickhouse.datetime.timezone` at construction (§3.1.2), so `ClickHouseSinkTask.start` reads only configured zones. The session zone is not read on this path.
@@ -814,7 +825,7 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
 - §3.1.6, loud failures: `DBMetadataServerTimeZoneTest.resolvedZoneIsReturned()`, `DBMetadataServerTimeZoneTest.nullConnectionFailsLoudly()`, `DBMetadataServerTimeZoneTest.queryFailureFailsLoudly()`, `DBMetadataServerTimeZoneTest.emptyResultFailsLoudly()`, `DBMetadataServerTimeZoneTest.unresolvableZoneFailsLoudly()` (no UTC fallback); `BinLogHistoryTest.timeColumnIgnoresEmptySourceZoneAndRefusesEmptyServerZone()` (a null or blank server zone is refused, an empty source zone is not used).
 - §3.1.5: `ConnectionTimeZonePreflightTest.unsetSourceIsRefusedBeforeConnection()` (refused before any connection, naming the key and `UTC`).
 - §3.1.2, shipped configurations: `ShippedConfigZoneKeysTest.lightweightYamlConfigurationsPassThePreflight()` (every shipped docker and k8s sample, and the two test resources the integration tests load, pass the real preflight); `ShippedConfigZoneKeysTest.postgresTestConfigurationStatesBothZones()` (the Postgres integration tests start: both zones are `UTC`); `ShippedConfigZoneKeysTest.kafkaConnectSamplesNameBothZoneKeys()` (every Kafka Connect sink connector sample, script, test step and Helm template names both keys, so the worker does not refuse it); `ShippedConfigZoneKeysTest.aBlockEndsAtTheNextConnectorClass()`, `ShippedConfigZoneKeysTest.aCustomResourceClassLineStartsABlock()` (the block scan is cut at the next connector class, so a source connector's keys never count for the sink). A configuration without a key is found by a unit test, not by a Docker integration test hours later.
-- §3.1.6, startup cross-check: `ClickHouseZoneCrossCheckTest.serverMismatchIsReported()`, `ClickHouseZoneCrossCheckTest.columnMismatchIsReportedByName()`, `ClickHouseZoneCrossCheckTest.unsetConfiguredZoneIsRefused()`, `ClickHouseZoneCrossCheckTest.viewColumnsAreNotReported()`, `ClickHouseZoneCrossCheckTest.agreementHasNoFindings()`, `ClickHouseZoneCrossCheckTest.unreadableServerZoneThrows()`, `ClickHouseZoneCrossCheckTest.zoneOfTypeReadsExplicitZones()` (fake metadata source). The JDBC source (`JdbcZoneMetadataSource`) has no unit test and no integration run as part of this change.
+- §3.1.6, startup cross-check: `ClickHouseZoneCrossCheckTest.serverMismatchIsReported()`, `ClickHouseZoneCrossCheckTest.columnMismatchIsReportedByName()`, `ClickHouseZoneCrossCheckTest.unsetConfiguredZoneIsRefused()`, `ClickHouseZoneCrossCheckTest.viewColumnsAreNotReported()`, `ClickHouseZoneCrossCheckTest.equivalentZoneNameIsNotReported()`, `ClickHouseZoneCrossCheckTest.equivalentServerZoneNameIsNotReported()`, `ClickHouseZoneCrossCheckTest.differentServerZoneIsStillReported()`, `ClickHouseZoneCrossCheckTest.columnScanExcludesInnerTables()`, `ClickHouseZoneCrossCheckTest.agreementHasNoFindings()`, `ClickHouseZoneCrossCheckTest.unreadableServerZoneThrows()`, `ClickHouseZoneCrossCheckTest.zoneOfTypeReadsExplicitZones()` (fake metadata source). The JDBC source (`JdbcZoneMetadataSource`) has no unit test and no integration run as part of this change.
 
 ---
 
