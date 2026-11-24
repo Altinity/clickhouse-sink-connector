@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PostgreSQLDDLParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -12,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import javax.sql.rowset.CachedRowSet;
 import javax.sql.rowset.RowSetProvider;
@@ -65,8 +67,10 @@ public class PostgresDDLOperationsIT {
         // Create the test database (fresh connection, no shared state)
         executeUpdate("CREATE DATABASE IF NOT EXISTS " + TEST_DB);
 
-        // Build the parser using the ClickHouse test database as the destination
-        parser = new PostgreSQLDDLParserService(null, null, TEST_DB);
+        // Build the parser using the ClickHouse test database as the destination. TIMESTAMP columns need both zone
+        // keys, which have no default, so the configuration carries them.
+        parser = new PostgreSQLDDLParserService(null,
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), TEST_DB);
     }
 
     @AfterAll

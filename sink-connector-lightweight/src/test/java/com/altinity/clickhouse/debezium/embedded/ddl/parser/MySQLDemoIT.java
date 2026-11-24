@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -97,7 +98,7 @@ public class MySQLDemoIT  {
             mysqlConn = connectToMySQL();
             String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
             Connection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
-                    "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                    "employees", new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
             writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
 

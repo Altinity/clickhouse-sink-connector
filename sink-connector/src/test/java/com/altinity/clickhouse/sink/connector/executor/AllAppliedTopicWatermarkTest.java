@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.common.TopicPartition;
@@ -43,7 +44,7 @@ public class AllAppliedTopicWatermarkTest {
         watermark.put(new TopicPartition(TOPIC, 0), 5L);
         ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(
                 new LinkedBlockingQueue<>(),
-                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 new HashMap<>(),
                 watermark) {
             @Override
@@ -71,7 +72,7 @@ public class AllAppliedTopicWatermarkTest {
         watermark.put(new TopicPartition(TOPIC, 0), 50L);
         ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(
                 new LinkedBlockingQueue<>(),
-                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 new HashMap<>(),
                 watermark) {
             @Override

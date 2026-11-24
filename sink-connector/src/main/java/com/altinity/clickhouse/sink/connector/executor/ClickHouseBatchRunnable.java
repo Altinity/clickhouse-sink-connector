@@ -4,6 +4,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.MissingTargetTableException;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -881,6 +883,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(replicationLogOnly && replicationHistoryEnabled)  { 
             // skip the following for loop and continue to the next step
             log.debug("Replication log only mode is enabled, skipping the processing of records");
+            // The records were handed to the history table above, so they are
+            // processed as far as this mode goes: report their offsets, lag
+            // and binlog position, which are otherwise only updated by the
+            // regular write path that this mode skips.
+            updateMetricsForBatchWithoutTableWrite(currentBatch);
         } else {
             for (Map.Entry<String, List<ClickHouseStruct>> entry :
                     topicToRecordsMap.entrySet()) {
@@ -949,6 +956,31 @@ public class ClickHouseBatchRunnable implements Runnable {
                 ClickHouseSinkConnectorConfigVariables.
                         BUFFER_FLUSH_TIME.toString()));
         ///// ***** END PROCESSING BATCH **************************
+    }
+
+    /**
+     * Publishes the batch's metrics (partition offsets, source and Debezium lag,
+     * binlog position, GTID) for a batch that never goes through the table write
+     * path, as {@code replication_log_only} batches do. Failing to publish never
+     * fails the batch, as on the regular write path.
+     *
+     * @param batch the records of the batch.
+     */
+    @VisibleForTesting
+    void updateMetricsForBatchWithoutTableWrite(List<ClickHouseStruct> batch) {
+        BlockMetaData bmd = new BlockMetaData();
+        for (ClickHouseStruct record : batch) {
+            try {
+                bmd.update(record);
+            } catch (Exception e) {
+                log.error("**** ERROR: updating Prometheus", e);
+            }
+        }
+        try {
+            Metrics.updateMetrics(bmd);
+        } catch (Exception e) {
+            log.error("****** Error updating Metrics ******", e);
+        }
     }
 
     /**
@@ -1062,29 +1094,18 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Returns the ClickHouse server timezone.
+     * Returns the ClickHouse-side zone the sink writes DateTime values in: the configured
+     * {@code clickhouse.datetime.timezone}, which is mandatory (Spec 07.03 section 3.1.2). The config
+     * constructor refuses an unset value, and an unresolvable one throws here. The server's zone is never read.
      *
      * @param config the connector configuration
-     * @return a ZoneId representing the server timezone
+     * @return the configured ClickHouse zone
      */
     public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.
                         CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if (!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e) {
-            log.error("**** Error parsing user provided timezone:" +
-                    userProvidedTimeZone + e.toString());
-        }
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(systemConnection());
+        return TimeZoneResolver.clickHouseZone(userProvidedTimeZone);
     }
 
     /**
@@ -1222,21 +1243,6 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
-        // Sorting key passed as a supplier, not a snapshot: this executor is
-        // built BEFORE the metadata-retry block below, which is where a table
-        // created by DDL (rather than by auto-create) first resolves its
-        // sorting key. A value captured here would still be empty, and the
-        // writer would then silently skip the UPDATE tombstone.
-        final DbWriter sortingKeySource = writer;
-        PreparedStatementExecutor preparedStatementExecutor = new
-                PreparedStatementExecutor(
-                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
-                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
-                        writer != null ? writer.getSignColumn() : null,
-                        writer != null ? writer.getVersionColumn() : null,
-                        writer != null ? writer.getDatabaseName() : databaseName,
-                        getServerTimeZone(this.config),
-                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format("*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
@@ -1250,6 +1256,20 @@ public class ClickHouseBatchRunnable implements Runnable {
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
+                // A table that the catalog positively reports missing can never
+                // settle by retrying. Left as a retry it fills the handoff FIFO
+                // and trips the hard cap, which reads as a performance problem
+                // and names neither the table nor the cause (spec 08.07
+                // section 3.1). Fail the batch so its offset is not committed
+                // and the records replay once the table exists.
+                if (writer != null && writer.isTargetTableAbsent()) {
+                    throw new MissingTargetTableException(String.format(
+                            "Target table %s.%s does not exist in ClickHouse. Create the table, "
+                                    + "or enable auto.create.tables, to resume replication. Failed the "
+                                    + "batch so its offset is not committed; the records replay from "
+                                    + "the last committed offset.",
+                            writer.getDatabaseName(), writer.getTableName()));
+                }
                 log.error(String.format("*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next attempt",
                         writer != null ? writer.getDatabaseName() : databaseName,
@@ -1257,6 +1277,25 @@ public class ClickHouseBatchRunnable implements Runnable {
                 return false;
             }
         }
+        // The executor is built only now, after the metadata-retry block above:
+        // the version / sign / delete columns it binds are resolved by
+        // DbWriter.updateColumnNameToDataTypeMap(), so a writer first built
+        // while the table was missing has none of them until that refresh. An
+        // executor built before it captured null and, for a custom
+        // ReplacingMergeTree(ver, del), omitted both columns from the INSERT
+        // (stored as 0: a delete landed as a live row). Past this point the
+        // writer is non-null and its metadata is retrieved.
+        final DbWriter resolvedWriter = writer;
+        PreparedStatementExecutor preparedStatementExecutor = new
+                PreparedStatementExecutor(
+                        resolvedWriter.getReplacingMergeTreeDeleteColumn(),
+                        resolvedWriter.isReplacingMergeTreeWithIsDeletedColumn(),
+                        resolvedWriter.getSignColumn(),
+                        resolvedWriter.getVersionColumn(),
+                        resolvedWriter.getDatabaseName(),
+                        getServerTimeZone(this.config),
+                        // A supplier, not a snapshot: the sorting key is read on use.
+                        resolvedWriter::getSortingKeyColumns);
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
         // This step creates an ordered list of segments, each a Map of

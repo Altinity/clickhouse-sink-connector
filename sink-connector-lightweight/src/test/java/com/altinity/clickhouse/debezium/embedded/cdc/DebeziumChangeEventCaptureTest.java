@@ -1,10 +1,14 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.SourcePosition;
+import com.github.shyiko.mysql.binlog.event.Event;
+import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
+import com.github.shyiko.mysql.binlog.event.EventType;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -15,6 +19,8 @@ import org.json.simple.parser.ParseException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -22,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntConsumer;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
@@ -133,7 +141,7 @@ public class DebeziumChangeEventCaptureTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static void runControlRecordBatch(ChangeEvent<SourceRecord, SourceRecord> record)
@@ -802,5 +810,64 @@ public class DebeziumChangeEventCaptureTest {
         // Test case insensitivity
         String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail optimize partition p20230106";
         assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("A partial update event fails the engine terminally: no restart, exit 3 (spec 01.10 section 3.1)")
+    public void partialUpdateEventFailsTheEngineWithoutARetry() {
+        List<Integer> exitCodes = new ArrayList<>();
+        IntConsumer savedHook = DebeziumChangeEventCapture.terminalFailureHook;
+        DebeziumChangeEventCapture.terminalFailureHook = exitCodes::add;
+        try {
+            EventHeaderV4 header = new EventHeaderV4();
+            header.setEventType(EventType.PARTIAL_UPDATE_ROWS_EVENT);
+            BinlogEventAudit.audit(new Event(header, null));
+
+            Properties props = new Properties();
+            props.setProperty("exit.on.terminal.failure", "true");
+            AtomicInteger restarts = new AtomicInteger();
+            new DebeziumChangeEventCapture().handleEngineCompletion(false, "engine stopped",
+                    new IOException("peer closed"), props, () -> restarts.incrementAndGet());
+
+            assertEquals("a recreated engine would read the same partial update and stop at it again", 0, restarts.get());
+            assertEquals("the process exits as a terminal failure does",
+                    Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE), exitCodes);
+        } finally {
+            DebeziumChangeEventCapture.terminalFailureHook = savedHook;
+            BinlogEventAudit.reset();
+        }
+    }
+
+    @Test
+    @DisplayName("A source that cannot be read at restart spends the retry budget, then fails terminally (spec 10.04 section 3.6)")
+    public void unreadableSourceAtRestartSpendsARetry() {
+        List<Integer> exitCodes = new ArrayList<>();
+        IntConsumer savedHook = DebeziumChangeEventCapture.terminalFailureHook;
+        int savedMaxRetries = DebeziumChangeEventCapture.MAX_RETRIES;
+        int savedSleep = DebeziumChangeEventCapture.SLEEP_TIME;
+        DebeziumChangeEventCapture.terminalFailureHook = exitCodes::add;
+        DebeziumChangeEventCapture.MAX_RETRIES = 2;
+        DebeziumChangeEventCapture.SLEEP_TIME = 0;
+        try {
+            // 127.0.0.1:1 refuses the connection at once: the source cannot be asked.
+            Properties props = new Properties();
+            props.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+            props.setProperty("database.hostname", "127.0.0.1");
+            props.setProperty("database.port", "1");
+            props.setProperty("database.user", "u");
+            props.setProperty("database.password", "p");
+            props.setProperty("exit.on.terminal.failure", "true");
+            AtomicInteger restarts = new AtomicInteger();
+            new DebeziumChangeEventCapture().handleEngineCompletion(false, "engine stopped",
+                    new IOException("connection reset"), props, () -> restarts.incrementAndGet());
+
+            assertEquals("the engine is not recreated into a source that cannot be read", 0, restarts.get());
+            assertEquals("two retries are spent on the unreadable source, then the failure is terminal",
+                    Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE), exitCodes);
+        } finally {
+            DebeziumChangeEventCapture.terminalFailureHook = savedHook;
+            DebeziumChangeEventCapture.MAX_RETRIES = savedMaxRetries;
+            DebeziumChangeEventCapture.SLEEP_TIME = savedSleep;
+        }
     }
 }

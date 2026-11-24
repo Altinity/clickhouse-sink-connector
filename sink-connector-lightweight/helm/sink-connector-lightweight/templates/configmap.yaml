@@ -11,7 +11,7 @@ data:
     database.port: "5432"
     database.user: "root"
     database.password: "root"
-    database.server.name: "ER54"
+    topic.prefix: "ER54"
     schema.include.list: public,public2
     slot.name: connector2
     plugin.name: "pgoutput"
@@ -102,7 +102,6 @@ data:
       database.user: "root"
       database.password: "root"
       database.server.id: "12345"
-      database.server.name: "ER54"
       database.include.list: sbtest
       #table.include.list: ""
       clickhouse.server.url: "clickhouse"

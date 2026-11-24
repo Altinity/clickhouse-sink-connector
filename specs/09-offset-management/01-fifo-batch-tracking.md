@@ -295,6 +295,29 @@ direction: it can withhold a control-record commit, never permit an unsafe one
 (spec 09.04). There is no separate handoff counter and no separate pick-up
 registry.
 
+That argument holds for every removal EXCEPT the one `reset()` performs (§3.8
+item 1), which drops units that were never acknowledged. `reset()` alone
+therefore also arms a separate predicate:
+
+- `hasUnprovenAbandonment()` is true from a `reset()` that abandoned at least
+  one unit until a unit assigned AFTER that reset (`sequence >=
+  retiredBelowSequence`) is acknowledged. It is a predicate of its own, NOT part
+  of `hasUnwrittenBatches()`: the abandonment is deliberately invisible to the
+  stop-drain (`drainBeforeStop()`), to the DDL-drain wait
+  (`awaitPipelineQuiescent()`) and to the start-time refusal in `setup()`, all
+  of which must keep treating an abandoned FIFO as empty — a latch inside
+  `hasUnwrittenBatches()` would hang the DDL drain and refuse the restart that
+  exists to recover from the abandonment.
+- Its only consumer is the control-record commit (spec 09.04 §3): committing a
+  heartbeat's CURRENT position is exactly the act that would move the offset
+  past rows the abandoned units still owed, and until a post-reset unit proves
+  the redelivery has advanced again, nothing proves those rows are in
+  ClickHouse.
+- It clears on acknowledgement of a post-reset unit, not on a timer and not on
+  the next handoff: a handoff is a read, not a write, and the gate must stay
+  armed until something durably written proves the new engine's stream has
+  reached the FIFO's head.
+
 ### 3.8 In-process engine restart: abandon, never poison
 The state above is static, but the embedded engine is restarted INSIDE the
 process — REST `/restart`, `/start` after `/stop`, and the restart monitor each
@@ -310,10 +333,29 @@ parked units' record lists leak.
 Contract:
 1. `DebeziumChangeEventCapture.stop()` closes the engine (no more handoffs),
    drains through the still-running pool (bounded), shuts the pool down, and
-   THEN calls `reset()` (spec 01.01 §3.3). `reset()` clears
-   `outstandingSequences`, `unwrittenGroups` and `completedUnits`, logs the
-   number of abandoned units at WARN, and returns it. `handoffCounter` is NOT
-   reset: sequences stay unique for the life of the JVM.
+   calls `reset()` only once the pool has terminated (spec 01.01 §3.3).
+   `reset()` requires that no worker can still report a write, so it runs
+   after the pool's await returns true, never after a timed-out await. If the
+   pool does not terminate within its bound, `stop()` logs at ERROR, does not
+   call `reset()`, and leaves the FIFO as it is: the still-running workers keep
+   reporting into it, and the next engine's `setup()` abandons the outstanding
+   units (item 3). When `reset()` runs, it clears `outstandingSequences`,
+   `unwrittenGroups` and `completedUnits`, logs the number of abandoned units at
+   WARN, and returns it. `handoffCounter` is NOT reset: sequences stay unique
+   for the life of the JVM.
+2. Everything abandoned was never acknowledged (a unit leaves the outstanding
+   set only through acknowledgement), so no committed offset is rolled back and
+   the next engine redelivers the abandoned rows from the last committed
+   offset — at-least-once, never loss (`Replication.OffsetFifo.acked_never_rolled_back`).
+   A unit that was written but parked is abandoned too: its rows are in
+   ClickHouse and will be redelivered; the redelivery-stable versioning (spec
+   02.04) makes the second write idempotent.
+3. On the timeout path `stop()` itself commits no offset: it calls neither
+   `markProcessed` nor `markBatchFinished`. An acknowledgement comes only from a
+   unit whose every group was written (the writer's `result` gate, then the
+   FIFO drain), so a batch that a still-running worker has not finished is never
+   acknowledged, and the next engine's `setup()` abandons it and it is
+   redelivered from the last committed offset.
 2. Everything abandoned was never acknowledged (a unit leaves the outstanding
    set only through acknowledgement), so no committed offset is rolled back and
    the next engine redelivers the abandoned rows from the last committed
@@ -398,7 +440,8 @@ Contract:
    batch it already holds (item 1's drain, or a queue it is still emptying);
    that write is a redelivery in advance and is idempotent (spec 02.04).
 
-Machine-checked as the `restart` event of `OffsetFifo.lean`:
+Machine-checked as the `restart` event of `AbandonLatch.lean` and
+`OffsetFifo.lean`:
 `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`, the
 counterexample `old_restart_poisons_fifo` (old `stop()`: `handoff, restart,
 handoff, write 1` leaves `acked = []` with `0` outstanding) and
@@ -452,6 +495,19 @@ would let a later batch commit an offset past rows that never reached a queue.
   not block itself; acknowledging one leaves the sibling tracked.
 - `HandedOffBatchVisibilityTest` — visible from handoff; per-group counting;
   quiescent only after the whole unit is acknowledged.
+- `AbandonLatchTest` — §3.6, the latch's own transitions in the
+  `sink-connector` module: a `reset()` that abandons a unit arms
+  `hasUnprovenAbandonment()` while leaving `hasUnwrittenBatches()` false (the
+  stop-drain and `setup()` still see an empty FIFO), and acknowledging a unit
+  assigned after the reset clears it; a `reset()` with nothing outstanding arms
+  nothing; a handoff arms nothing and a pre-reset acknowledgement keeps it
+  armed. `AbandonLatchGateTest` proves the same rule at the gate, in the
+  module where `commitControlRecordOffset` is reachable: the heartbeat is
+  withheld with an empty FIFO and commits again once the latch releases.
+  Machine-checked as
+  `latch_armed_only_on_abandonment`, `latch_blocks_commit`,
+  `latch_cleared_by_post_reset_ack` and `latch_never_blocks_drain` in
+  `AbandonLatch.lean`.
 - `CoalescedQueuedBatchesTest.committerFailureOnFirstOfTwoCoalescedGroupsDoesNotOrphanTheSecond`
   — PR #1437 review, High item (§3.2): two single-record groups on different
   topics are handed off and coalesced into one write sharing one committer
@@ -522,9 +578,11 @@ would let a later batch commit an offset past rows that never reached a queue.
   inside the re-arm window, one summary INFO per interval, one "pacing ended"
   INFO from the first acknowledgement or wait after a quiet gap (naming the
   state at the last release) or on `reset()`.
-- `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
-  the next engine's heartbeat commits / first unit is acknowledged with nothing
-  parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
+- `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit,
+  the latch arms, the next engine's heartbeat is WITHHELD (its offset is the
+  current position, past the abandoned rows), its first unit is acknowledged at
+  once with nothing parked, and the heartbeat then commits
+  (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
   `stop()`; engine closed before the pool; in-flight work drained before the
   pool stops; `deadEngineWithoutStopIsAbandonedNotPoisoning` — the recorded
   engine's pool terminated without `stop()`, FIFO dirty: a second engine's

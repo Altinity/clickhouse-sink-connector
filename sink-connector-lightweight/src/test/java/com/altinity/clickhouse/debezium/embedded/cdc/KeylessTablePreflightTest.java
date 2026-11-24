@@ -73,7 +73,7 @@ public class KeylessTablePreflightTest {
     @Test
     public void testWarningNamesTheTablesAndTheFix() {
         String msg = KeylessTablePreflight.warningPreExisting(
-                Arrays.asList("app.events", "app.audit"));
+                Arrays.asList("app.events", "app.audit"), true);
 
         Assert.assertTrue("must name every offending table", msg.contains("app.events"));
         Assert.assertTrue(msg.contains("app.audit"));
@@ -429,6 +429,77 @@ public class KeylessTablePreflightTest {
 
         Assert.assertEquals(keyless,
                 KeylessTablePreflight.withoutExcluded(keyless, new Properties()));
+    }
+
+    /**
+     * The banner advice follows the REAL state of {@code sql_generate_invisible_primary_key}: with it OFF the
+     * operator must be told to turn it on; claiming it is ON would say new tables are safe when they are not.
+     */
+    @Test
+    public void testPreExistingWarningReflectsGipkOffAndOn() {
+        List<String> tables = Arrays.asList("app.events");
+
+        String off = KeylessTablePreflight.warningPreExisting(tables, false);
+        Assert.assertTrue("GIPK off: must tell the operator how to turn it on",
+                off.contains("SET GLOBAL sql_generate_invisible_primary_key = ON"));
+        Assert.assertFalse("GIPK off: must not claim it is already on",
+                off.contains("is ON, so tables created from now"));
+
+        String on = KeylessTablePreflight.warningPreExisting(tables, true);
+        Assert.assertTrue("GIPK on: existing tables still need an ALTER", on.contains("NOT retroactive"));
+        Assert.assertFalse("GIPK on: no advice to turn it on", on.contains("SET GLOBAL"));
+    }
+
+    /** Table filters are case-insensitive, like Debezium's and {@code DdlCaptureFilter}'s. */
+    @Test
+    public void testTableExcludeListIsCaseInsensitive() {
+        Properties props = new Properties();
+        props.setProperty("table.exclude.list", "APP[.]Alembic_Version");
+
+        List<String> keyless = Arrays.asList("app.alembic_version", "app.trade");
+
+        Assert.assertEquals(Collections.singletonList("app.trade"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    @Test
+    public void testTableIncludeListIsCaseInsensitive() {
+        Properties props = new Properties();
+        props.setProperty("table.include.list", "APP[.]TRADE.*");
+
+        List<String> keyless = Arrays.asList("app.trade_scratch", "app.alembic_version");
+
+        Assert.assertEquals("only the included table, matched regardless of case, still blocks",
+                Collections.singletonList("app.trade_scratch"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    /** A table in a database named by {@code database.exclude.list} is not replicated, so it is not reported. */
+    @Test
+    public void testDatabaseExcludeListIsRespected() {
+        Properties props = new Properties();
+        props.setProperty("database.exclude.list", "scratch_.*,Archive");
+
+        List<String> keyless = Arrays.asList(
+                "SCRATCH_1.events",    // pattern, matched regardless of case
+                "archive.audit",       // literal, matched regardless of case
+                "archive_old.audit",   // anchored: not the excluded literal
+                "app.events");
+
+        Assert.assertEquals(Arrays.asList("archive_old.audit", "app.events"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    /** An unparseable database pattern is ignored, never treated as a match that hides a keyless table. */
+    @Test
+    public void testUnparseableDatabaseExcludePatternFailsSafe() {
+        Properties props = new Properties();
+        props.setProperty("database.exclude.list", "*[bad(regex,scratch");
+
+        List<String> keyless = Arrays.asList("scratch.events", "app.events");
+
+        Assert.assertEquals(Collections.singletonList("app.events"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
     }
 
     /**

@@ -29,7 +29,7 @@ Specifies the JDBC connection lifecycle and HikariCP connection pool management 
 ## 3. Operational Specification
 
 ### 3.1 Pool Initialization
-1. `BaseDbWriter.createConnection` builds the JDBC properties (`client_name`, `custom_settings`, user `clickhouse.jdbc.params`, and `http_connection_provider=HTTP_URL_CONNECTION` when pooling is enabled) and a `SinkConnectorDataSource` carrying the real `jdbc:clickhouse://host:port/db` URL. `custom_settings` is computed by `BaseDbWriter.customSettings(userSettings)`: the default list `input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1`, or the user's `clickhouse.jdbc.settings` with `input_format_null_as_default=0` appended when the user list does not mention that key (Spec 07.07 §3.2.1 — the server must never substitute a DEFAULT for a bound NULL).
+1. `BaseDbWriter.createConnection` builds the JDBC properties (`client_name`, `custom_settings`, user `clickhouse.jdbc.params`, and `http_connection_provider=HTTP_URL_CONNECTION` when pooling is enabled) and a `SinkConnectorDataSource` carrying the real `jdbc:clickhouse://host:port/db` URL. `custom_settings` is computed by `BaseDbWriter.customSettings(userSettings)`: the default list `DEFAULT_CUSTOM_SETTINGS` (`input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1`), or, when `clickhouse.jdbc.settings` is set, the user's entries merged key-by-key over those defaults: each user entry is kept and overrides only its own key, and every default key the user did not mention is appended, including `input_format_null_as_default=0` (Spec 07.07 §3.2.1 — the server must never substitute a DEFAULT for a bound NULL unless the user says so explicitly).
 2. When `connection.pool.disable = true`, a plain connection is taken from that data source; no pool exists.
 3. Otherwise `HikariDbSource.getInstance` looks up (or creates via `createConnectionPool`) the pool for the key `host:port|database`. `createConnectionPool` sets `poolName = "clickhouse-" + databaseName`, `connectionTimeout`, `maximumPoolSize`, `maxLifetime`, `setDataSource(chDataSource)` (no `setJdbcUrl`/driver class), credentials, and registers the Prometheus meter registry when metrics are enabled.
 
@@ -87,6 +87,13 @@ removes the properties the V2 driver rejects (`keepalive.timeout`,
 pool the call runs several times a minute for the life of the process, and a
 WARN each time is noise that hides real warnings.
 
+The V1 branch of `createConnection()` is not reached from configuration:
+`clickhouse.jdbc.v1=true` is refused at parse time (spec 03.08), so the filter
+applies to every connection. The filter removes only `keepalive.timeout` and
+`max_buffer_size`. `socket_timeout`, `connection_timeout` and
+`http_keep_alive_timeout` are V2 properties and pass through unchanged. The
+mapping and the javap citations are in `doc/jdbc-property-mapping.md`.
+
 ---
 
 ## 4. Invariants Preserved
@@ -115,6 +122,12 @@ WARN each time is noise that hides real warnings.
   ERROR).
 - `ClickHouseBatchRunnableDatabaseBootstrapTest.failedCreateDatabaseIsNotMarkedEnsured`
   — a failing statement is retried on the next miss and still logs at ERROR.
+- `V1OnlyJdbcPropertiesTest.testTimeoutPropertiesArePassedThroughUnchanged` —
+  `socket_timeout`, `connection_timeout` and `http_keep_alive_timeout` survive
+  `dropV1OnlyProperties`.
+- `V1OnlyJdbcPropertiesTest.testDropListAgreesWithTheV2DriverPropertyTable` —
+  no dropped key is a `ClientConfigProperties` key of clickhouse-jdbc 0.9.8, and
+  the three timeouts are.
 - `V1OnlyJdbcPropertiesTest.warnsOncePerPropertyKeyPerJvm` — two
   `dropV1OnlyProperties` calls with the same keys produce exactly one WARN per
   key; both calls still remove the properties. Fails on the pre-fix code (two
@@ -137,7 +150,7 @@ The pool layer's posture is "a failed connection fails the batch, the worker ret
 
 - **FM-03.05-2 A retired endpoint is never probed again**
   - **Trigger**: FM-03.05-1 retired the endpoint; ClickHouse comes back.
-  - **Behaviour**: `initiateNewConnectionIfClosed` refuses a dead endpoint without probing it (`ClickHouse server <host:port> is no longer reachable; not retrying for database: <db>`). Only `HikariDbSource.getInstance` clears the mark, i.e. a caller opening a new connection through `BaseDbWriter.createConnection`. Inside a worker that happens when `ClickHouseBatchRunnable.systemConnection()` re-opens an unusable system connection — reached only from `getServerTimeZone`, and only when `clickhouse.datetime.timezone` is empty — or on a `getClickHouseConnection` cache miss (the map keeps the broken handle, so not after the first open); other threads (the DDL path) may also register it. With `clickhouse.datetime.timezone` set, a worker can stay refused after ClickHouse is healthy until a DDL or a restart (inferred from the code; not measured).
+  - **Behaviour**: `initiateNewConnectionIfClosed` refuses a dead endpoint without probing it (`ClickHouse server <host:port> is no longer reachable; not retrying for database: <db>`). Only `HikariDbSource.getInstance` clears the mark, i.e. a caller opening a new connection through `BaseDbWriter.createConnection`. Inside a worker that happens on a `getClickHouseConnection` cache miss (the map keeps the broken handle, so not after the first open); other threads (the DDL path) may also register it. `systemConnection()` has no caller in the current code, and `getServerTimeZone` opens no connection: it returns the configured `clickhouse.datetime.timezone`, which is mandatory (Spec 07.03 §3.1.2), and the server's zone is never read. A worker can stay refused after ClickHouse is healthy until a DDL or a restart (inferred from the code; not measured).
   - **Detection**: ERROR `Error retrieving new connection in getConnection` and the FM-03.03-1 retry lines continue while ClickHouse is healthy (`SELECT 1` succeeds from the connector host).
   - **Blast radius**: writes stay stopped after the cause is gone; no loss.
   - **Recovery**: restart the connector (`HikariDbSource.close` clears both endpoint sets).

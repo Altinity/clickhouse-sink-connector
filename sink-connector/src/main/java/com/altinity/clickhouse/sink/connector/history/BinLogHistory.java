@@ -3,10 +3,10 @@ package com.altinity.clickhouse.sink.connector.history;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
-import com.clickhouse.data.ClickHouseDataType;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -193,13 +193,15 @@ public class BinLogHistory {
      */
     public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, 
     List<ClickHouseStruct> clickHouseStructs, String sourceTimeZone, String serverTimeZone) throws SQLException {
-        // if serverTimeZone is empty, default to UTC.
-        if(serverTimeZone == null || serverTimeZone.isEmpty()) {
-            serverTimeZone = "UTC";
+        // Spec 07.03 section 3.1.2: the caller passes the configured clickhouse.datetime.timezone, which is
+        // mandatory. An unset value is refused here, never defaulted.
+        // sourceTimeZone does not affect the bound values and is no longer defaulted.
+        if (TimeZoneResolver.isUnset(serverTimeZone)) {
+            throw new IllegalArgumentException("serverTimeZone is required to bind source.ts_ms; "
+                    + "the caller must resolve the ClickHouse server zone first (no UTC default)");
         }
-        if(sourceTimeZone == null || sourceTimeZone.isEmpty()) {
-            sourceTimeZone = "UTC";
-        }
+        ZoneId historyZone = TimeZoneResolver.resolve(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE,
+                serverTimeZone, TimeZoneResolver.Kind.CLICKHOUSE);
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
@@ -211,10 +213,13 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convert(struct.getTs_ms(),
-                        ClickHouseDataType.DateTime64, ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
-                            ps.setString(paramIndex++, convertedDateTime64Time);
-                    } 
+                        // source.ts_ms is a true instant (statement execution time), not
+                        // zone-less DATETIME digits: bind it as epoch text, which parses
+                        // exactly into the DateTime64 column whatever zone it declares
+                        // and whatever the source and server zones are (Spec 12.04 3.3).
+                        ps.setString(paramIndex++, DebeziumConverter.TimestampConverter
+                                .instantEpochText(struct.getTs_ms(), historyZone));
+                    }
                     else {
                         Object value = getValueFromStruct(struct, columnName, config);
                         ps.setObject(paramIndex++, value);

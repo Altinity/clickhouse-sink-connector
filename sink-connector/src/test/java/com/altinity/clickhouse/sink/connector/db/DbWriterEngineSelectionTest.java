@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DbWriterEngineSelectionTest {
 
     private static DBMetadata reporting(String version) {
-        return new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())) {
+        return new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))) {
             @Override
             public String getClickHouseVersion(Connection connection) {
                 return version;
@@ -32,7 +33,7 @@ public class DbWriterEngineSelectionTest {
     @Test
     @DisplayName("A failed SELECT VERSION() propagates instead of selecting the legacy engine")
     public void versionQueryFailurePropagates() throws Exception {
-        DBMetadata failing = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())) {
+        DBMetadata failing = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))) {
             @Override
             public String getClickHouseVersion(Connection connection) throws SQLException {
                 throw new SQLException("connection reset by peer");

@@ -15,7 +15,7 @@ Specifies the extraction, normalization, and comparison of binary log coordinate
   - `SourcePosition.compareTo(SourcePosition other)` / `equals` / `hashCode`.
   - `SourcePosition.sameLog(SourcePosition other)` — whether two positions belong to the same binary log (equal file prefix); false across a log basename change (§3.1.1).
   - `SourcePosition.sameLogPosition(SourcePosition other)` — whether two positions name the same binary log **event**: same log, same file, same byte position, any row index (§3.3). The version sequence uses it to recognise the rest of the event that set its high-water mark (spec 02.02 §3.1.2); under `binlog_transaction_compression` that event is a whole transaction (spec 01.08 §3.2).
-  - `ClickHouseStruct.getSourcePositionFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord>)` — reads `source.file` / `source.pos` / `source.row` (or `source.lsn`) from the Debezium envelope; `ClickHouseStruct.getSourcePosition()` does the same from an already-parsed struct.
+  - `ClickHouseStruct.getSourcePositionFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord>)` and `ClickHouseStruct.getSourcePosition()` — prefer the binlog restart cursor from `sourceOffset` (§3.4), otherwise retain envelope/captured `source.file` / `source.pos` / `source.row` (or `source.lsn`).
 
 ---
 
@@ -41,6 +41,65 @@ The order compares $F_{\text{prefix}}$ first, as a string, so it is total across
 
 ### 3.3 The row index is not part of an event's identity
 $R_{\text{idx}}$ counts rows *inside* one rows event and restarts at 0 in every rows event. Two positions with equal $(F, P)$ and different $R$ are the same event; `sameLogPosition` is that equality. It matters because $P$ is not always one statement: with `binlog_transaction_compression=ON` the whole transaction is one `Transaction_payload_event` and every row of every statement inside it is delivered at that event's $P$ (spec 01.08 §3.2), so a comparison that includes $R$ ranks the second statement's first row *below* the first statement's last row although it committed in the same instant and follows it in log order. `compareTo` keeps $R$ (it is a total order over rows, used to skip already-written rows on a restart); classification of first delivery vs redelivery must use `sameLogPosition` first (spec 02.02 §3.1.2). PostgreSQL positions have no row: `sameLogPosition` is LSN equality.
+
+### 3.4 Debezium restart cursor takes precedence over event-header positions
+
+Both `ClickHouseStruct` extraction paths prefer a usable MySQL/MariaDB
+`SourceRecord.sourceOffset()` cursor: `(file, pos, event, row)`. Here `pos` is
+Debezium's restart anchor (the BEGIN position while in a transaction), `event`
+is the count of completed binlog events since that anchor, and `row` is the
+number of rows to skip in the current rows event (one-based on emitted rows).
+Missing `event` and `row` mean zero, as in Debezium `BinlogOffsetContext`;
+negative or non-integral components, or a missing/invalid file or positive
+position, make the cursor unusable. In that case the existing envelope
+`source.file/pos/row` or PostgreSQL LSN extraction is unchanged. Offsets on
+non-binlog source records are not interpreted as binlog cursors.
+
+Compare the restart cursor lexicographically by file, anchor position, event
+ordinal, then row. Include the event ordinal in equality, hashing and
+`sameLogPosition` (which still ignores row). Thus later events in one
+transaction advance even when the 32-bit event-header `source.pos` wraps past
+4 GiB. Example: one transaction anchored at `mysql-bin.000010:900000000`
+delivers header positions `900000100`, `900000300`, then `700000000`, with
+offset event ordinals `4`, `6`, `500004`: the third event is newer, not replay.
+No backward jump is unwrapped or inferred from arrival order. Reconstructing
+any cursor after replay/restart produces equal coordinates without retained
+wrap state. The existing durable version horizon and raw Debezium offset
+persistence remain unchanged; this cursor is only the in-memory ordering key.
+
+Compressed transaction payload inner handlers do not advance the offset event
+ordinal, and row indexes can reset inside the payload. Equal `(file, pos,
+event)` therefore remains one marked event for the shared-floor rule. Once a
+later event is marked, an older event ordinal remains replay, regardless of
+its row index or wrapped header position.
+
+**Boundary:** this repairs header wrap *within a stable restart anchor*, not
+an upstream restart anchor that itself wraps across transactions. There is no
+safe way to distinguish such an anchor regression from replay using this
+metadata alone. Envelope-only producers retain their previous limitations.
+Mixing envelope-only records with restart-cursor records does not establish a
+shared physical coordinate system. `sameCoordinateKind` identifies this
+boundary; comparison orders coordinate kinds explicitly to remain total, but
+the sequencer must not use that arbitrary order to infer first delivery. On a
+same-log kind mismatch it logs a warning, retains the mark, and uses the raw
+source timestamp (the positionless/replay rule), rather than clamping a
+possible replay. Supported Debezium streaming records use the restart cursor
+consistently. No new monotonicity guarantee is claimed across metadata changes. The Lean floor model still consumes an abstract ordered
+event identity; its floor/restart proofs are unchanged, not a proof of the
+Java cursor extraction or of globally unwrapped binlog offsets.
+
+Verification: `SourcePositionTest` covers both extractors, absent/invalid
+offset fallback, ordering/equality/hash, event/row resets and rotation;
+`BinlogOffsetVersionTest` covers wrapped header positions, older statement
+timestamps, earlier-event replay, compressed-payload row resets and restart
+floor seeding with reconstructed cursors. Boundary matrices exercise both sides
+of 2 GiB, 4 GiB and 8 GiB through both extraction paths. A replay matrix asserts
+that an older NULL image cannot displace the corrected value selected by version;
+a fixed-seed sequence checks repeated header wraps with older statement times.
+The `Binlog ordering regression` CI job runs these tests and `SourcePositionTest`
+on every pull request and push to `2.11.1`, without depending on an image build.
+These preserve I1, I2 and I11 within the stated boundary; no version encoding or
+persistence format changes.
 
 ### 3.2 GTID Coordination
 When Global Transaction Identifiers (GTID) are enabled:

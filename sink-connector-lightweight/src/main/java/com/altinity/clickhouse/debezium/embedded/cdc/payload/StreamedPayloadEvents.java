@@ -87,10 +87,10 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
     private final transient Map<Long, TableMapEventData> tableMapEventByTableId;
 
     /**
-     * Whether a pass has already handed this payload's inner events to the XA audit (spec 01.10): only the
-     * first pass does, so the audit sees each inner event once although the payload is iterated three times.
+     * Whether a pass has already handed this payload's inner events to the XA event observer (spec 01.10): only
+     * the first pass does, so the observer sees each inner event once although the payload is iterated three times.
      */
-    private transient boolean auditClaimed;
+    private transient boolean observerClaimed;
 
     /**
      * @param compressed               the payload bytes, as read from the event
@@ -151,8 +151,8 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
         private final boolean audit;
 
         Pass() {
-            this.audit = !auditClaimed;
-            auditClaimed = true;
+            this.audit = !observerClaimed;
+            observerClaimed = true;
             InputStream raw = new java.io.ByteArrayInputStream(compressed);
             InputStream decoded;
             if (compressionType == COMPRESSION_ZSTD) {
@@ -227,6 +227,11 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
                     // first pass; the dispatch pass parses its own copy lazily as before.
                     BinlogEventAudit.observeInner(new Event(header,
                             innerDeserializer.getEventDataDeserializer(type).deserialize(new ByteArrayInputStream(body))));
+                }
+                if (audit && type == EventType.PARTIAL_UPDATE_ROWS_EVENT) {
+                    // A partial update inside a compressed transaction (spec 01.10 section 3.1). Its data is not
+                    // needed: the event observer records the stop from the event type alone.
+                    BinlogEventAudit.observeInner(new Event(header, null));
                 }
                 return new LazyPayloadEvent(header, body, innerDeserializer.getEventDataDeserializer(type));
             } catch (IOException e) {

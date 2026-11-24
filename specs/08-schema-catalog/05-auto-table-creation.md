@@ -91,12 +91,39 @@ created the table with the **legacy** `ReplacingMergeTree(_version)` +
 Known residual differences, owned by the DDL translator (not changed here):
 `BOOL`/`BOOLEAN` keywords are declared `Bool` by the DDL path while the
 record path (Debezium delivers `INT16`, type `TINYINT`) declares `Int8`; the
-DDL path declares DATETIME columns in the configured `clickhouse.datetime.timezone`
-(and a bare `DateTime64`, i.e. precision 3, for `DATETIME` when no zone is
-configured) whereas this path always declares `'UTC'` (Spec 07.03 §3.1.3).
-`DateTime64(p, 0)` as emitted by the DDL path without a zone is accepted by
-ClickHouse as `DateTime64(p)` (`clickhouse local` 24.8.14: the non-string
-optional timezone argument is ignored), so it is compared as such.
+DDL path declares DATETIME columns in the configured `clickhouse.datetime.timezone`,
+which is mandatory (Spec 07.03 §3.1.2), whereas this path always declares `'UTC'`
+(Spec 07.03 §3.1.3). A `DateTime64(p, 0)` placeholder, which the translator writes
+for a declared scale of 0 and which names no zone, is accepted by ClickHouse as
+`DateTime64(p)` (`clickhouse local` 24.8.14: the non-string optional timezone
+argument is ignored), so it is compared as such.
+
+#### 3.1.2 When a table is created, and which columns the column lists allow
+A source table reaches ClickHouse through exactly one of two paths, and the two
+differ in WHEN they act:
+- **This class (record-schema path)**: only when a record for the table
+  arrives. A source table that holds no rows is therefore never created by
+  `auto.create.tables=true` alone — there is no record to derive the schema
+  from, so no `CREATE TABLE` is attempted and nothing is logged about it at
+  WARN or above.
+- **The DDL translator (schema-DDL path)**: at snapshot start, from each source
+  `CREATE TABLE`, when `enable.snapshot.ddl=true` (Spec 06.08 §3.3 item 4).
+  This is the only path that creates a table that holds no rows.
+
+Both paths are now held to the same rule for WHICH columns they create. The
+record-schema path builds from the Kafka Connect schema, which Debezium has
+already filtered, so a column left out by `column.include.list` /
+`column.exclude.list` never reaches it. The schema-DDL path translates the raw
+source `CREATE TABLE` text, which Debezium does not filter, so it applies the
+same lists itself (Spec 06.04 §3.6); before that it created every column of
+every table, including the ones the lists exclude. That combination — the only
+route that can create an empty table was also the one that ignored the lists —
+is the reported shape of issue 1579.
+
+No third creation path and no new configuration key are added: an empty table
+that must exist before its first row is created by pairing
+`auto.create.tables=true` with `enable.snapshot.ddl=true`, and the column lists
+are honoured by both paths under that pairing.
 
 ### 3.2 Sorting key selection
 `ReplacingMergeTree` deduplicates on the sorting key. With `ORDER BY tuple()`
@@ -217,16 +244,41 @@ wildcard override that does not apply to this table -- and a ClickHouse-only
 column a user added by hand is therefore never inspected or altered, even
 when it happens to carry the exact name a generated ALIAS column would have.
 
+### 3.4 Quoted identifiers and column removal
+
+Every identifier the schema operations put into DDL is backtick-quoted, so a reserved word or a name with a dot or dash
+(`order`, `select`, `my-history.db`) is accepted by ClickHouse:
+
+- `ClickHouseAlterTable.createAlterTableSyntax` writes ``ALTER TABLE `t` add column `c` Type`` and
+  ``ALTER TABLE `t` drop column `c` ``.
+- `ClickHouseAutoCreateTable.createTableSyntax` writes ``PRIMARY KEY(`a`,`b`) ORDER BY(`a`,`b`)``.
+- `ClickHouseAutoCreateTable.createHistoryDatabase` writes ``CREATE DATABASE IF NOT EXISTS `db` ``.
+
+`ClickHouseDbConstants.ALTER_TABLE_DELETE_COLUMN` is `drop column`. The earlier text `delete column` is not ClickHouse
+syntax, and `DROP COLUMN` takes no data type after the name, so the REMOVE form emits the name only. No connector code path
+requests REMOVE; the schema-evolution path only adds columns.
+
+`ClickHouseAlterTable.alterTable` decides that a record column is missing by a case-insensitive comparison with the
+ClickHouse columns, as the column refresh does. A record column that differs from an existing one only in case is not added
+a second time. A failed `ALTER TABLE` is rethrown as the `SQLException`; it is no longer logged and reported as done. Both
+callers already catch `Exception`, so the failure reaches the existing error path.
+
 ---
 
 ## 4. Invariants Preserved
 - **Invariant I3 (Convergence)**: an auto-created `ReplacingMergeTree` table always has a sorting key under which distinct source rows stay distinct.
 - **Invariant I9 (Loud Failure)**: a keyless source table is reported with the banner naming the fix; it is never silently collapsed.
 - **Zero Configuration Setup**: Enables out-of-the-box replication without manual ClickHouse DDL pre-provisioning.
+- **Creation-path parity (Prime Directive)**: whichever path creates a table, it creates exactly the columns the record path replicates. This class reads the already-filtered record schema; the DDL translator applies the same `column.include.list` / `column.exclude.list` to the `CREATE TABLE` it translates (§3.1.2, Spec 06.04 §3.6). A column the lists exclude is never created empty by one path while the other omits it.
 
 ---
 
 ## 5. Verification Criteria
+- `ClickHouseSchemaOpsQuotingTest.deleteColumnConstantIsDropColumn()`,
+  `.addQuotesTableAndColumns()`, `.removeEmitsValidDropColumn()`,
+  `.caseInsensitiveColumnComparison()`, `.missingColumnIsAddedQuoted()`,
+  `.failedAlterIsSurfaced()`, `.primaryKeyAndOrderByAreQuoted()` and
+  `.createDatabaseQuotesName()` cover section 3.4 with a recording `Connection` double and no database.
 - `ClickHouseAutoCreateTableTest.testKeylessTableOrdersByAllColumns()` —
   `createTableSyntax(null, "audit", "db", fields a,b,...)` contains no
   `ORDER BY tuple()`, its `ORDER BY` names `a` and `b`, and no `PRIMARY KEY`
@@ -255,6 +307,11 @@ when it happens to carry the exact name a generated ALIAS column would have.
 - `ColumnTypeOverrideReconcilerTest.addColumnDdlSucceedsForSourceMatchingColumn()`
   — the existing auto-add behaviour for a source-matching column is
   unaffected by the scope guard.
+- `DdlColumnFilterEmissionTest.includeListKeepsTheExcludedColumnOutOfTheCreate()`
+  / `.noListCreatesEveryColumn()` / `.keyColumnIsAlwaysCreated()` — §3.1.2: the
+  schema-DDL path, the only one that creates an empty source table, creates
+  exactly the columns `column.include.list` keeps, and never filters out a
+  column the sorting key names.
 - DDL path (same rule, Spec 06.05 §3.6): `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()`, `CreateTableNoKeySortKeyTest`; formal `Replication.CreateTable.sorting_key_nonempty`.
 - Probe (recorded in the PR): the emitted DDL executed with `clickhouse local`
   keeps two distinct rows under `FINAL`; the `tuple()` form keeps one.
@@ -285,6 +342,13 @@ when it happens to carry the exact name a generated ALIAS column would have.
 ---
 
 ## 6. Failure Modes & Recovery
+- **FM-08.05-7 Unquoted identifier or failed ALTER reported as success**
+  - **Trigger**: a source table or column named like a ClickHouse keyword, or a ClickHouse user without the ALTER grant.
+  - **FIXED** in this revision (section 3.4): identifiers are quoted and a failed `ALTER TABLE` is rethrown.
+  - **Detection**: the `SQLException` from ClickHouse reaches the caller's error path and the batch fails loudly.
+  - **Recovery**: grant `ALTER` on the table, or rename the colliding column in the target; the batch retries.
+  - **RTO**: one batch retry interval after the grant is applied.
+  - **Test**: `ClickHouseSchemaOpsQuotingTest.failedAlterIsSurfaced()`, `.primaryKeyAndOrderByAreQuoted()`.
 Auto-create runs once per writer build, inside the `DbWriter` constructor. When it fails, nothing retries it for the life of the process (spec 08.01 FM-08.01-5); when it succeeds after an out-of-band drop, it silently builds an empty replica; and the override contradiction it is documented to halt on is neither reachable for an existing table nor classified as terminal.
 
 - **FM-08.05-1 A transient failure during auto-create is never retried**
@@ -374,4 +438,46 @@ Auto-create runs once per writer build, inside the `DbWriter` constructor. When 
     to overrides whose source column exists on the table, so a ClickHouse-only
     column a user added is never touched.
 
-Summary: 5 failure modes, 4 DEFECT, 2 GAP.
+- **FM-08.05-6 An empty source table never reaches ClickHouse, or reaches it with its excluded columns**
+  - **Trigger**: a captured source table holds no rows at snapshot time, with
+    `auto.create.tables=true` and `column.include.list` / `column.exclude.list`
+    set. Either `enable.snapshot.ddl` is not `true`, or it is `true` and the
+    source `CREATE TABLE` reaches the DDL translator (`column.include.list:
+    "app.users.(id|name),app.orders.(id|user_id)"`).
+  - **Behaviour**: with `enable.snapshot.ddl` off, no record ever arrives for
+    the table, so `ClickHouseAutoCreateTable.createNewTable()` is never called
+    and the table does not exist in ClickHouse — a query against it fails,
+    with nothing at WARN or above explaining why. With it on, the DDL translator
+    created the table but translated every column of the source `CREATE TABLE`,
+    so the columns the lists exclude were created too, empty, and the replica
+    disagreed with the record path about the same table (§3.1.2). This was the
+    only path that could create an empty table, and it was the one that ignored
+    the lists.
+  - **Detection**: with `enable.snapshot.ddl` off, INFO `**** Task(%s), AUTO
+    CREATE TABLE (%s) Database(%s) ***` never appears for the table and a
+    `SHOW TABLES` on the target lacks it; with it on, the created table carries
+    columns no record of it will ever populate (`system.columns` against the
+    replicated column set).
+  - **Blast radius**: the table itself, and every downstream query that expects
+    it to exist. No row of a captured table is lost — the table either is
+    absent or carries empty extra columns.
+  - **Recovery**: set `enable.snapshot.ddl=true` and restart, which creates the
+    empty table from the source `CREATE TABLE`; where it already existed with
+    the excluded columns, drop the extra columns by hand (`ALTER TABLE ...
+    DROP COLUMN`) after checking nothing reads them.
+  - **RTO**: one restart plus the snapshot DDL pass; unbounded without an
+    operator when `enable.snapshot.ddl` is off, because nothing reports the
+    absence.
+  - **Test**: `DdlColumnFilterEmissionTest.includeListKeepsTheExcludedColumnOutOfTheCreate()`,
+    `.includeListFiltersPerTable()`, `.keyColumnIsAlwaysCreated()`,
+    `.noMatchingColumnCreatesEveryColumn()` cover the column half on the path
+    that creates the empty table; GAP: an integration test that snapshots an
+    empty source table with `enable.snapshot.ddl=true` and a column list and
+    asserts the created table holds exactly the listed columns.
+  - **FIXED** (column half) in this revision (§3.1.2): the schema-DDL path
+    applies the column lists, so an empty table is created with the columns the
+    record path replicates. The absence half is not a defect of this class by
+    design — no record, no schema — and is answered by the
+    `enable.snapshot.ddl=true` pairing rather than by a third creation path.
+
+Summary: 6 failure modes, 4 DEFECT, 2 GAP.

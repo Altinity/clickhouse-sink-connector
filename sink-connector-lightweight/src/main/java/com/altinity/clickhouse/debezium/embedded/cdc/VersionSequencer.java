@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.SourcePosition;
 import org.apache.logging.log4j.LogManager;
@@ -15,10 +16,22 @@ import java.util.List;
  *
  * <p>Stateless logic over process-wide mutable state; extracted from
  * {@link DebeziumChangeEventCapture} so it is owned and tested on its own. The
- * statics are shared across engine restarts within one JVM -- deliberately: see
- * {@link #sequenceMaxSourceTs} and {@link #sequenceHighWaterPosition}. The formal
+ * floor, anchor, counter and assigned-version maximum survive engine restarts
+ * within one JVM. The position gate is cleared by {@link #beginEngineRun} only
+ * after successful seeding. The formal
  * model of the floor is {@code Replication.VersionFloor}
  * (formal_specs/lean/Replication/VersionFloor.lean).</p>
+ *
+ * <p><b>Both version domains.</b> A GTID row's {@code _version} is the snowflake
+ * {@code SnowFlakeId.generate(versionTs, gtid)}; a row without one is the sequence
+ * value. The position handed in carries the GTID transaction number
+ * ({@link SourcePosition#gtidTransaction}), so for every first delivery the sequence
+ * keeps the FINAL version above the highest final version assigned before it: a GTID
+ * row's {@code versionTs} is moved forward by the least amount needed (22-bit wrap,
+ * server UUID change), a row without a GTID is carried above earlier snowflake
+ * versions, and from that carry on the sequence values (which the durable horizon
+ * covers) dominate the GTID versions too (spec 02.01 section 3.1.2, spec 02.02
+ * section 3.5.1; {@code Replication.VersionFloor.Domains}).</p>
  */
 final class VersionSequencer {
 
@@ -58,6 +71,14 @@ final class VersionSequencer {
     public static long sequenceNumber = SEQUENCE_START;
 
     /**
+     * Highest sequence-domain value assigned in this counter lifecycle. Guarded
+     * by the class monitor and cleared when an unset anchor initializes the
+     * counter. Retains carry that a reset would otherwise discard (spec 02.03
+     * section 3.2.1); this is not a new persisted version domain.
+     */
+    private static long sequenceMaxAssignedVersion = 0L;
+
+    /**
      * Source-timestamp anchor for the intra-second sequence counter.
      *
      * <p>The counter resets only when the SOURCE commit clock advances by more than one
@@ -73,10 +94,11 @@ final class VersionSequencer {
      * High-water mark of the source-log position ({@link SourcePosition}) versioned in
      * this run.
      *
-     * <p>Debezium delivers events in log order, and log order IS commit order. The only
-     * time a lower position follows a higher one is a redelivery after an offset rewind.
-     * The mark therefore separates the two cases the version sequence has to treat
-     * differently:</p>
+     * <p>Debezium delivers events in log order, and log order IS commit order.
+     * MySQL positions prefer the restart anchor/event/row cursor, which survives
+     * header-position wrap inside a transaction (spec 01.02 section 3.4). An
+     * anchor that itself wraps is still ambiguous with replay; no wrap is inferred.
+     * Within comparable coordinates the mark separates the two cases:</p>
      * <ul>
      *   <li><b>first delivery</b> (position above the mark): the event committed after
      *   every event already versioned, so its {@code _version} must rank above all of
@@ -89,7 +111,7 @@ final class VersionSequencer {
      * <p>The mark is comparable only within one binary log: a positioned record from a
      * differently named log ({@link SourcePosition#sameLog} false -- the basename
      * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
-     * It is reset by a process restart; a new run starts with an empty mark and a
+     * It is reset by every successfully seeded engine start; a new run starts with an empty mark and a
      * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
@@ -131,6 +153,43 @@ final class VersionSequencer {
      * monotonic in commit order, which is the only order ReplacingMergeTree needs.</p>
      */
     public static long sequenceMaxSourceTs = 0L;
+
+    /**
+     * Highest FINAL {@code _version} given to a first delivery (or the rest of its
+     * marked event) in this counter lifecycle, across both version domains: the
+     * snowflake {@code SnowFlakeId.generate(versionTs, gtid)} for a position that
+     * carries a GTID transaction number, the sequence value otherwise (spec 02.01
+     * section 3.1.2). Guarded by the class monitor; cleared with
+     * {@link #sequenceMaxAssignedVersion} when an unset anchor initializes the counter.
+     */
+    private static long sequenceMaxFinalVersion = 0L;
+
+    /**
+     * GTID transaction number of the record that set {@link #sequenceMaxFinalVersion},
+     * or {@link SourcePosition#NO_GTID} when a row without a GTID set it. A GTID row
+     * of the SAME transaction may tie with it (the rows of one transaction share one
+     * snowflake version, spec 02.01 section 3.1.1); any other row must exceed it.
+     */
+    private static long sequenceMaxFinalGtid = SourcePosition.NO_GTID;
+
+    /**
+     * {@code true} once a row without a GTID had to be carried above a GTID
+     * (snowflake) version in this counter lifecycle: from then on the sequence values
+     * -- the values the durable horizon covers -- are kept at or above every final
+     * version, GTID rows included, so a restart can seed above all of them (spec
+     * 02.02 section 3.5.1).
+     */
+    private static boolean sequenceDomainsMerged = false;
+
+    /**
+     * Version floor seeded at engine start from a durable mark that lies in the
+     * snowflake domain ({@link VersionHighWaterMark#seedFloor}, spec 02.02 section
+     * 3.5.1): every first delivery of the run is versioned above it in either domain.
+     * {@code 0} when the mark was an ordinary sequence-domain mark. Unlike the
+     * in-run maxima it survives the counter initialization of the first record of a
+     * process; it is only ever raised.
+     */
+    static long seededVersionFloor = 0L;
 
     /**
      * Assigns the next ReplacingMergeTree {@code _version} for a record whose source
@@ -185,7 +244,12 @@ final class VersionSequencer {
     static final class VersionAssignment {
         /** {@code effectiveTs * 1_000_000 + counter}. */
         final long sequenceNumber;
-        /** The record's source timestamp, clamped up to the floor when a first delivery. */
+        /**
+         * The timestamp the record's {@code versionTs} must carry: its source
+         * timestamp, clamped up to the floor when a first delivery, and for a GTID
+         * first delivery moved forward by the least amount that keeps its snowflake
+         * version above the previous one (spec 02.01 section 3.1.2).
+         */
         final long effectiveTs;
 
         VersionAssignment(long sequenceNumber, long effectiveTs) {
@@ -206,6 +270,10 @@ final class VersionSequencer {
         if (sequenceAnchorTs == 0L) {
             sequenceAnchorTs = recordTs;
             sequenceNumber = SEQUENCE_START_INITIAL;
+            sequenceMaxAssignedVersion = 0L;
+            sequenceMaxFinalVersion = 0L;
+            sequenceMaxFinalGtid = SourcePosition.NO_GTID;
+            sequenceDomainsMerged = false;
         }
         long effectiveTs = recordTs;
         // A position is comparable with the mark only inside one binary log. After
@@ -228,16 +296,39 @@ final class VersionSequencer {
         // through to the redelivery branch and kept their raw statement time
         // while the first statement's rows had been floored: an INSERT
         // out-ranked its own UPDATE and DELETE (spec 02.02 section 3.1.2).
+        boolean incompatibleCoordinates = position != null && sequenceHighWaterPosition != null
+                && position.sameLog(sequenceHighWaterPosition)
+                && !position.sameCoordinateKind(sequenceHighWaterPosition);
+        if (incompatibleCoordinates) {
+            log.warn("Source coordinate kind changed from {} to {}; keeping the high-water mark and "
+                    + "raw source timestamp because restart anchors and event-header positions are not comparable",
+                    sequenceHighWaterPosition, position);
+        }
         boolean restOfMarkedEvent = position != null && sequenceHighWaterPosition != null
                 && position.sameLogPosition(sequenceHighWaterPosition);
-        if (position != null && !restOfMarkedEvent
+        // A lower-numbered file of the same basename inside one engine run is a log
+        // that restarted lower -- a failover to a new primary whose log is also called
+        // mysql-bin, or RESET MASTER -- never a redelivery: Debezium reads forward
+        // within a run and every engine start clears the mark before replay. Its
+        // events are new commits, so they are first deliveries and the mark moves to
+        // the new log (FM-02.02-6, spec 02.02 section 3.1).
+        boolean logRestartedLower = position != null && sequenceHighWaterPosition != null
+                && !incompatibleCoordinates
+                && position.inEarlierFileOfSameLog(sequenceHighWaterPosition);
+        boolean firstDelivery = position != null && !incompatibleCoordinates && !restOfMarkedEvent
                 && (sequenceHighWaterPosition == null
                         || !position.sameLog(sequenceHighWaterPosition)
-                        || position.compareTo(sequenceHighWaterPosition) > 0)) {
+                        || logRestartedLower
+                        || position.compareTo(sequenceHighWaterPosition) > 0);
+        if (firstDelivery) {
             if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
                 log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
                         + "differently named log; its first record is versioned as a first delivery",
                         sequenceHighWaterPosition, position);
+            } else if (logRestartedLower) {
+                log.warn("Binary log restarted lower: high-water position {} is replaced by {} from an "
+                        + "earlier-numbered file of the same log (failover or RESET MASTER); its records are "
+                        + "versioned as first deliveries", sequenceHighWaterPosition, position);
             }
             sequenceHighWaterPosition = position;
             if (effectiveTs < sequenceMaxSourceTs) {
@@ -277,7 +368,71 @@ final class VersionSequencer {
         } else {
             sequenceNumber++;
         }
-        return new VersionAssignment(effectiveTs * 1_000_000L + sequenceNumber, effectiveTs);
+        long timestampComponent = effectiveTs * 1_000_000L;
+        long version = timestampComponent + sequenceNumber;
+        long versionTs = effectiveTs;
+        if (firstDelivery || restOfMarkedEvent) {
+            long gtid = position.gtidTransaction();
+            long finalFloor = Math.max(sequenceMaxFinalVersion, seededVersionFloor);
+            boolean merged = sequenceDomainsMerged || seededVersionFloor > 0L;
+            long finalVersion;
+            if (gtid != SourcePosition.NO_GTID) {
+                // GTID row: its _version is SnowFlakeId.generate(versionTs, gtid),
+                // whose low 22 bits are the transaction number. Inside one effective
+                // millisecond that number is commit order only for one server UUID
+                // and between two wraps of the field (FM-02.01-2). Move the
+                // timestamp field forward by the least amount that keeps the version
+                // above every earlier first delivery (a tie only with the rows of
+                // the same transaction). The floor itself is not raised.
+                long reach = gtid == sequenceMaxFinalGtid ? finalFloor : Math.addExact(finalFloor, 1L);
+                versionTs = SnowFlakeId.timestampReaching(effectiveTs, gtid, reach);
+                finalVersion = SnowFlakeId.generate(versionTs, gtid, false);
+                if (versionTs > effectiveTs) {
+                    // The durable horizon covers sequence values: keep the bumped
+                    // millisecond inside them so a restart seeds above it.
+                    version = Math.max(version, Math.addExact(Math.multiplyExact(versionTs, 1_000_000L), 1L));
+                }
+                if (merged) {
+                    // Once the domains merged the horizon must cover the snowflake
+                    // versions themselves (spec 02.02 section 3.5.1).
+                    version = Math.max(version, finalVersion);
+                }
+            } else {
+                // Row without a GTID: its _version is the sequence value. After GTID
+                // rows it lies in a domain BELOW every snowflake version (FM-02.01-1)
+                // and must be carried above the highest final version.
+                if (version <= finalFloor) {
+                    if (finalFloor > sequenceMaxAssignedVersion && !merged) {
+                        log.warn("A row without a GTID at {} follows GTID rows: its sequence version {} is "
+                                + "carried above the GTID version {} so that commit order is kept "
+                                + "(spec 02.01 section 3.1.2)", position, version, finalFloor);
+                    }
+                    if (finalFloor > sequenceMaxAssignedVersion) {
+                        sequenceDomainsMerged = true;
+                    }
+                    version = Math.addExact(finalFloor, 1L);
+                }
+                finalVersion = version;
+            }
+            if (version <= sequenceMaxAssignedVersion) {
+                // A large window carries its counter into the timestamp component.
+                // A reset (including one caused by a replay or positionless row)
+                // must not make a first delivery, including remaining statements of
+                // the marked event, tie or fall below it. Older-event replay remains
+                // unclamped. Keep the timestamp and formula; retain only needed carry.
+                version = Math.addExact(sequenceMaxAssignedVersion, 1L);
+                if (gtid == SourcePosition.NO_GTID) {
+                    finalVersion = version;
+                }
+            }
+            sequenceNumber = version - timestampComponent;
+            if (finalVersion >= sequenceMaxFinalVersion) {
+                sequenceMaxFinalGtid = gtid;
+            }
+            sequenceMaxFinalVersion = Math.max(sequenceMaxFinalVersion, finalVersion);
+        }
+        sequenceMaxAssignedVersion = Math.max(sequenceMaxAssignedVersion, version);
+        return new VersionAssignment(version, versionTs);
     }
 
     /**
@@ -301,6 +456,25 @@ final class VersionSequencer {
     }
 
     /**
+     * Starts an engine epoch after its predecessor has stopped dispatching.
+     * The seed must already cover the previous epoch's handed-off versions.
+     * Replay from the durable offset is an ordered suffix, not an isolated in-run
+     * duplicate. Keep the counter, anchor and maximum assigned sequence value.
+     *
+     * @param floorMs the successfully established restart floor
+     * @return the floor in force
+     */
+    static synchronized long beginEngineRun(long floorMs) {
+        if (floorMs <= 0) {
+            throw new IllegalArgumentException("A positive version floor is required before an engine starts");
+        }
+        long floor = raiseVersionFloor(floorMs);
+        sequenceHighWaterPosition = null;
+        sequenceHighWaterEffectiveTs = 0L;
+        return floor;
+    }
+
+    /**
      * Raises the version floor to {@code floorMs} if it is higher than the floor in
      * force; never lowers it.
      *
@@ -312,6 +486,24 @@ final class VersionSequencer {
             sequenceMaxSourceTs = floorMs;
         }
         return sequenceMaxSourceTs;
+    }
+
+    /**
+     * Raises the seeded version floor to {@code highWaterVersion}: a durable mark in
+     * the snowflake domain, left by a run whose rows without a GTID were carried above
+     * GTID versions (spec 02.02 section 3.5.1). Every first delivery of the coming run
+     * is then versioned above it in either domain, and the run keeps its sequence
+     * values above its GTID versions so that the next mark covers them as well. Never
+     * lowers it; {@code <= 0} is ignored.
+     *
+     * @param highWaterVersion the persisted horizon
+     * @return the seeded version floor in force
+     */
+    static synchronized long raiseSeededVersionFloor(long highWaterVersion) {
+        if (highWaterVersion > seededVersionFloor) {
+            seededVersionFloor = highWaterVersion;
+        }
+        return seededVersionFloor;
     }
 
     /**

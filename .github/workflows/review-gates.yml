@@ -45,21 +45,39 @@ jobs:
       # then not even a directory), and a PR must not be able to weaken the
       # checks that judge it. A PR that changes the checks themselves still
       # runs its own copy's tests in the spec-governance job.
+      #
+      # One exception, the release pull request. A release line is a branch of
+      # this repository named like a version (2.11.1). When it already contains
+      # its base, it is judged by its own copy of the checks: a fix to the
+      # checks that landed on the line cannot reach the base before the release
+      # merges, and the base's older copy would re-judge commits the line has
+      # already published. A fork, a feature branch, and a line that has not
+      # merged its base all keep the base's copy.
       - name: Take the checks from the base branch
         id: checks
         env:
           BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          if ! git cat-file -e "origin/${BASE_REF}:scripts/review_gates.py" 2>/dev/null; then
-            echo "::notice::origin/${BASE_REF} has no scripts/review_gates.py; nothing to run"
+          checks_ref="origin/${BASE_REF}"
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] \
+              && printf '%s\n' "$HEAD_REF" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+              && git merge-base --is-ancestor "origin/${BASE_REF}" HEAD \
+              && git cat-file -e "HEAD:scripts/review_gates.py" 2>/dev/null; then
+            checks_ref="HEAD"
+            echo "::notice::release line ${HEAD_REF} contains ${BASE_REF}; the checks come from the line's own copy"
+          fi
+          if ! git cat-file -e "${checks_ref}:scripts/review_gates.py" 2>/dev/null; then
+            echo "::notice::${checks_ref} has no scripts/review_gates.py; nothing to run"
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/checks/tests"
-          git show "origin/${BASE_REF}:scripts/review_gates.py" > "$RUNNER_TEMP/checks/review_gates.py"
-          git show "origin/${BASE_REF}:scripts/tests/test_review_gates.py" > "$RUNNER_TEMP/checks/tests/test_review_gates.py"
+          git show "${checks_ref}:scripts/review_gates.py" > "$RUNNER_TEMP/checks/review_gates.py"
+          git show "${checks_ref}:scripts/tests/test_review_gates.py" > "$RUNNER_TEMP/checks/tests/test_review_gates.py"
           echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Gate self-tests

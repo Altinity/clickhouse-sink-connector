@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.logging.log4j.Level;
@@ -184,7 +185,7 @@ public class ClickHouseBatchRunnableDatabaseBootstrapTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /** A database name no other test (or earlier run in this JVM) has ensured. */

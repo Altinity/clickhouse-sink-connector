@@ -33,7 +33,7 @@ public class IgnoreDeleteWarningTest {
         // The constructor path must not throw with the option set.
         Map<String, String> full = props("true");
         ClickHouseSinkConnectorConfig.setDefaultValues(full);
-        assertTrue(new ClickHouseSinkConnectorConfig(full).getBoolean(
+        assertTrue(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(full)).getBoolean(
                 ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString()));
     }
 

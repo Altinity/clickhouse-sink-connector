@@ -25,6 +25,21 @@ def is_binary_datatype(datatype):
     return base in binary_datatypes
 
 
+# The driver passes this literal word as the key column of a table that has no
+# integer primary key; it is not a column name and must never be quoted as one.
+NO_PRIMARY_KEY = 'NULL'
+
+
+def quote_identifier(name):
+    """``name`` as a MySQL backtick-quoted identifier; a backtick inside it is doubled."""
+    return "`" + str(name).replace("`", "``") + "`"
+
+
+def sql_literal(value):
+    """``value`` as a single-quoted MySQL string literal (backslash and quote escaped)."""
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
         host=mysql_host, user=quote_plus(mysql_user), passwd=quote_plus(mysql_passwd), port=int(mysql_port), db=mysql_database)
@@ -41,7 +56,11 @@ def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex
          exclude_regex_clause = f"and table_name not rlike '{exclude_tables_regex}'"
     non_partitioned_tables_clause = ""
     if non_partitioned_tables_only:
-        non_partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' group by table_schema, table_name having count(*) = 1 )"   
+        # information_schema.partitions holds one row with a NULL partition_name for a
+        # table that is not partitioned, and one row per partition otherwise: a table
+        # with a single partition has one row too, so count(*) = 1 let it through.
+        # count(partition_name) skips NULLs, so it is 0 only for an unpartitioned table.
+        non_partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' group by table_schema, table_name having count(partition_name) = 0 )"
     partitioned_tables_clause = ''
     if include_partitions_regex is not None:
         partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' and partition_name rlike '{include_partitions_regex}' group by table_schema, table_name having count(*) > 0 )"
@@ -141,7 +160,8 @@ def resolve_credentials_from_config(config_file):
 
 
 def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
-    sql = f"explain select * from `{mysql_table}` where {where} and {pk} between {min_pk} and {max_pk}"
+    sql = (f"explain select * from {quote_identifier(mysql_table)} where ({where}) "
+           f"and {quote_identifier(pk)} between {int(min_pk)} and {int(max_pk)}")
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
     count = int(head['rows'].iloc[0])
@@ -149,7 +169,10 @@ def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
 
 
 def get_min_max_pk_value(conn, mysql_table, pk, where):
-    sql = f"select min({pk}) as min_pk, max({pk}) as max_pk from `{mysql_table}` where {where}"
+    if not pk or pk == NO_PRIMARY_KEY:
+        return (None, None)
+    sql = (f"select min({quote_identifier(pk)}) as min_pk, max({quote_identifier(pk)}) as max_pk "
+           f"from {quote_identifier(mysql_table)} where {where}")
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
     if head['max_pk'].isnull().values.any():
@@ -161,10 +184,11 @@ def get_min_max_pk_value(conn, mysql_table, pk, where):
 
 def mysql_columns(conn, mysql_database, mysql_table, pk, ignore_pk=True):
     if ignore_pk:
-        not_equal_pk = f"and column_name <> '{pk}'"
+        not_equal_pk = f"and column_name <> {sql_literal(pk)}"
     else:
         not_equal_pk = ""
-    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' {not_equal_pk} order by ORDINAL_POSITION"
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={sql_literal(mysql_database)} "
+           f"and table_name = {sql_literal(mysql_table)} {not_equal_pk} order by ORDINAL_POSITION")
     df = mysql_execute_df(conn, sql)
     logging.debug('Columns \n' + df.to_string(index=False))
     list = df['COLUMN_NAME'].to_list()
@@ -175,7 +199,8 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
     where_integer = ""
     if is_integer:
         where_integer = " and data_type like '%int%'" 
-    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' and column_key='PRI' {where_integer} order by ORDINAL_POSITION"
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={sql_literal(mysql_database)} "
+           f"and table_name = {sql_literal(mysql_table)} and column_key='PRI' {where_integer} order by ORDINAL_POSITION")
     df = mysql_execute_df(conn, sql)
     logging.debug('PK columns \n' + df.to_string(index=False))
     list = df['COLUMN_NAME'].to_list()
@@ -185,8 +210,9 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
 def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
     """Names of the table's columns whose information_schema DATA_TYPE is one of
     ``data_types`` (bare keywords such as 'timestamp'), in ordinal order."""
-    quoted = ",".join("'" + data_type + "'" for data_type in data_types)
-    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' and data_type in ({quoted}) order by ORDINAL_POSITION"
+    quoted = ",".join(sql_literal(data_type) for data_type in data_types)
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={sql_literal(mysql_database)} "
+           f"and table_name = {sql_literal(mysql_table)} and data_type in ({quoted}) order by ORDINAL_POSITION")
     df = mysql_execute_df(conn, sql)
     return df['COLUMN_NAME'].to_list()
 
@@ -194,10 +220,8 @@ def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
 def mysql_column_names(conn, mysql_database, mysql_table):
     """Names of every column of the table, in ordinal order: the source column
     set the replica side compares against (spec 11.02 section 3.3)."""
-    def literal(value):
-        return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
-    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={literal(mysql_database)} "
-           f"and table_name = {literal(mysql_table)} order by ORDINAL_POSITION")
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={sql_literal(mysql_database)} "
+           f"and table_name = {sql_literal(mysql_table)} order by ORDINAL_POSITION")
     df = mysql_execute_df(conn, sql)
     return df['COLUMN_NAME'].to_list()
 
@@ -230,7 +254,9 @@ def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
 
         # we need to make sure there is data in the chunk, as CH wants data on insert in a pipe
         # we can use that to find a better minimum
-        sql = f"select {pk} from `{mysql_table}` where {where} and {pk} between {lower_bound} and {upper_bound}  order by {pk} limit 1"
+        quoted_pk = quote_identifier(pk)
+        sql = (f"select {quoted_pk} from {quote_identifier(mysql_table)} where ({where}) "
+               f"and {quoted_pk} between {lower_bound} and {upper_bound}  order by {quoted_pk} limit 1")
         df = mysql_execute_df(conn, sql)
         index = df.index
         number_of_rows = len(index)

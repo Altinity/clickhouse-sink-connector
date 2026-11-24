@@ -120,5 +120,8 @@ final class OffsetTestSupport {
         DebeziumOffsetManagement.outstandingSequences.clear();
         DebeziumOffsetManagement.groupToUnit.clear();
         DebeziumOffsetManagement.completedUnits.clear();
+        // An armed abandonment latch outlives a bare reset() by design (spec
+        // 09.01 §3.6), so the fixture clears it explicitly.
+        DebeziumOffsetManagement.clearAbandonmentLatchForTests();
     }
 }

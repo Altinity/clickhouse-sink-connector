@@ -29,12 +29,13 @@ the authoritative account of the code as built on 2.11.0: every flag, every
 statement and its order, the destructive steps and what a crash between them
 leaves behind, version and delete-flag semantics of reloaded rows, value
 rendering, the dry-run contract, the rewind, and concurrency with a running
-connector. It records 32 defects (§7), of which D-13.08-1 to D-13.08-11 and D-13.08-21 are fixed
+connector. It records 32 defects (§7), of which D-13.08-1 to D-13.08-11, D-13.08-20, and D-13.08-21 are fixed
 (§3 describes the fixed behaviour). Fixed in the loader (Spec 13.04), which resync runs:
 
 - binary columns were loaded in a different text form from the one the connector
-  writes in its default mode (D-13.08-1, fixed with D-13.04-3; a connector in
-  `base64` mode needs `--binary_handling_mode base64` through `--loader-cmd`);
+  writes in its default mode (D-13.08-1, fixed with D-13.04-3; base64 is now the
+  default on both sides, and a connector set explicitly to `bytes` needs
+  `--binary_handling_mode bytes` through `--loader-cmd`);
 - the packaged loader picked the time zone for `TIMESTAMP` parsing at random from
   the zones whose offset is `+00:00` on the day of the run, which could be a DST
   zone (D-13.08-2, fixed with D-13.04-2).
@@ -56,8 +57,9 @@ scratch name that is a live table is never recreated (D-13.08-11).
   - Pure helpers: `q`, `sql_str`, `mysql_to_ch` (`MYSQL_TYPE_MAP`), `parse_mysql_ddl`, `column_drift`,
     `drift_ddl`, `plan_replace`, `plain_identifiers`, `rewind_offset_json`, `rewind_offset_sql`,
     `select_offset_row`, `scratch_marker`, `binlog_coordinate`, `compare_binlog_positions`, `offset_position`,
-    `isolate_table_dir`, `data_files`, `dump_tables`, `exact_dump_rows`.
-  - Constants: `FAILED_STATUSES`, `SCRATCH_MARKER_PREFIX`, `HISTORY_COLUMNS`, `LEGACY_SIGN_COLUMN`, `VIRTUAL_COLUMNS`.
+    `isolate_table_dir`, `data_files`, `dump_tables`, `exact_dump_rows`, `canary_filter`,
+    `binary_log_status_statement`.
+  - Constants: `FAILED_STATUSES`, `SCRATCH_MARKER_PREFIX`, `HISTORY_COLUMNS`, `LEGACY_SIGN_COLUMN`, `DELETE_MARKER_COLUMNS`, `COLUMN_TYPE_PATTERN`, `VIRTUAL_COLUMNS`.
   - Wrappers: class `ClickHouse` (`_run`, `rows`, `one`, `write`), which shells out to `clickhouse-client`;
     `mysqlsh_run`, `capture_binlog_position`; the JavaScript program `DUMP_JS`.
   - Sub-commands: `cmd_dump`, `cmd_patch` (with the inner `one_table` and `set_status`), `cmd_rewind_sql`,
@@ -202,17 +204,20 @@ Environment: `MYSQL_PWD` (required). The tool sets `RESYNC_SCHEMA`, `RESYNC_DIR`
 ### 3.3 `dump` (`cmd_dump`, `:307-342`)
 1. `os.makedirs(dump_base, exist_ok=True)`.
 2. **Position capture.** This step runs only when `binlog_position_<stamp>.json` does not exist (`:312-319`).
-   `capture_binlog_position` (`:275-286`) runs
-   `mysqlsh --passwords-from-stdin --uri <uri> --sql --result-format=json/raw -e "SELECT NOW() AS taken_at, @@hostname AS source_host, UNIX_TIMESTAMP() AS ts_sec; SHOW MASTER STATUS;"`.
-   - Every stdout line that starts with `{` is parsed as JSON. The first document with `taken_at` supplies the
+   `capture_binlog_position` first runs
+   `mysqlsh --passwords-from-stdin --uri <uri> --sql --result-format=json/raw -e "SELECT @@version AS version, NOW() AS taken_at, @@hostname AS source_host, UNIX_TIMESTAMP() AS ts_sec;"`,
+   selects `SHOW BINARY LOG STATUS` on MySQL >= 8.2 and `SHOW MASTER STATUS` on older versions via
+   `binary_log_status_statement` (D-13.08-20 fixed), and then executes that status statement with `mysqlsh`.
+   - Each stdout line is parsed via `parse_mysqlsh_json_rows`, which scans from `{` so that `mysqlsh`'s
+     `--passwords-from-stdin` ANSI password prompt (written to stdout without a newline before row 1) never drops
+     the metadata or single-statement binlog status JSON object. The first document with `taken_at` supplies the
      metadata, and the first with `File` supplies the position.
    - The file written (`json.dump`, indent 2) is
      `{taken_at, source_host, ts_sec:int, file, pos:int, gtid_executed}`. `taken_at` is the source session's
      `NOW()` in the source session zone, and `ts_sec` is the source's `UNIX_TIMESTAMP()`.
-   - A non-zero `mysqlsh` exit raises `RuntimeError("mysqlsh SHOW MASTER STATUS failed ...")`. No `File` row
-     raises `RuntimeError("SHOW MASTER STATUS returned no row ...")`, which is the case when binary logging is
+   - A non-zero `mysqlsh` exit raises `RuntimeError("mysqlsh <stmt> failed ...")` (or `"mysqlsh metadata query failed ..."`).
+     No `File` row raises `RuntimeError("<stmt> returned no row ...")`, which is the case when binary logging is
      off or `REPLICATION CLIENT` is missing. Either way the result is a traceback with exit 1.
-   - `SHOW MASTER STATUS` does not exist on MySQL 8.4 and later (D-13.08-20).
    - If the file already exists, the run logs `binlog position already captured: ... (kept ...)`, so the
      position always predates the first table read of the whole dump set.
 3. **Per schema, in order** (`:321-341`):
@@ -329,9 +334,13 @@ is the live table.
 ### 3.6 `canary_ratio` (`:372-384`)
 - The sorting key must be a plain comma-separated list of identifiers (`plain_identifiers`). Otherwise the
   function returns `None` and the table is skipped **without any log line** (D-13.08-24).
-- It reads `SELECT name FROM system.columns WHERE database='<schema>' AND table='<t>'`. If a column named
-  `is_deleted` exists, the hash excludes `(_version, is_deleted)` and the live side is filtered with
-  `WHERE is_deleted = 0`. Otherwise only `(_version)` is excluded and there is no filter.
+- It reads `SELECT name FROM system.columns WHERE database='<schema>' AND table='<t>'` and passes the set to
+  `canary_filter`. `_version` is always excluded from the hash. Each delete marker the live table has
+  (`is_deleted`, `_is_deleted`, `__is_deleted`) is also excluded and the live side is filtered with
+  `` `<marker>` = 0``; a `_sign` column is excluded and filtered with `` `_sign` > 0`` (the connector writes `1` for a live
+  row and `-1` only for a DELETE). The conditions are joined with `AND`. Only columns the live table has are
+  named, since `* EXCEPT` of an absent column is an error. With none of them there is no filter
+  (D-13.08-35).
 - Statement:
   ```
   SELECT countIf(r.h = l.h), count()
@@ -340,10 +349,9 @@ is the live table.
   SETTINGS join_algorithm = 'parallel_hash'
   ```
 - `*` does not expand to MATERIALIZED or ALIAS columns. Rows present on only one side are ignored.
-- Columns the hash still covers: `_sign` on legacy-engine tables (scratch `1` since D-13.08-3, live `1` for
-  live rows, so it no longer differs), `_is_deleted` when the source has its own `is_deleted` column, and
-  live-only columns (scratch default against live value). The last two make the canary fail on
-  rendering-neutral differences (D-13.08-24).
+- Columns the hash still covers: live-only columns (scratch default against live value), which can make the
+  canary fail on rendering-neutral differences (D-13.08-24). `_sign` and every delete-marker spelling are no
+  longer among them (D-13.08-35).
 - The canary runs only when the scratch table has really been loaded (apply mode or `--skip-load`). A dry run
   without `--skip-load` evaluates none.
 
@@ -427,11 +435,11 @@ export TZ=Etc/UCT; zstd -d --stdout <dump>/_bytable/t/mydb@t@@0.tsv.zst | clickh
 #### 3.9.2 Binary columns (D-13.08-1, S1, fixed)
 **Since the fix** (Spec 13.04 §3.7.1, D-13.04-3) the loader classifies binary, BIT and spatial columns by
 their MySQL type, decodes them as the table's `<schema>@<t>.json` (`decodeColumns`, already hard-linked by
-`isolate_table_dir`) says, and renders them as the connector stores them: by default lower-case hex
-(`binary.handling.mode=bytes`, `persist.raw.bytes=false`). `run_loader` passes no rendering flag, so for a
-connector running `binary.handling.mode=base64` (the shipped templates' setting) or `persist.raw.bytes=true`
-the operator passes `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`
-(or `--persist_raw_bytes`). The rest of this section records the 2.11.0 behaviour.
+`isolate_table_dir`) says, and renders them as the connector stores them: by default base64 text
+(`binary.handling.mode=base64`), which is also the loader's default. `run_loader` passes no rendering flag, so
+a connector that runs `binary.handling.mode=bytes` (lower-case hex) or `persist.raw.bytes=true` needs
+`--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode bytes"` (or
+`--persist_raw_bytes`). The rest of this section records the 2.11.0 behaviour.
 
 `get_column_list(..., transform=True, mysqlshell=True)` would render binary columns as
 `if(col='\N', null, lower(hex(base64Decode(col))))` (`clickhouse_loader.py:399-401`). The branch is guarded by
@@ -451,8 +459,10 @@ is reported only by the next checksum.
 #### 3.9.3 Time zones (D-13.08-2, S1, packaged loader, fixed)
 - **Since the fix** (Spec 13.04 §3.9, D-13.04-2): the loader reads `tzUtc` from the dump's `@.json`, which
   `isolate_table_dir` now hard-links into `_bytable/<t>/` next to the table's files. The dumps `ch-mysql-resync`
-  takes never set `tzUtc`, so it is `true` and `TZ=UTC`, deterministically. Without `@.json` the loader logs a
-  WARNING and uses UTC. The bullets below up to the legacy loader record the 2.11.0 behaviour.
+  takes never set `tzUtc`, so it is `true` and `TZ=UTC`, deterministically. Without `@.json` (or without a
+  `tzUtc` value) the loader refuses before any statement unless `--source_timezone` names the zone (Spec 13.04
+  §3.9, FM-13.04-27). Resync passes no zone flag, so such a table is reported LOAD_FAILED. The bullets below up
+  to the legacy loader record the 2.11.0 behaviour.
 - `load_schema_mysqlshell` fixed the dump zone at `'+00:00'` (`clickhouse_loader.py:347`). MySQL Shell's
   default `tzUtc` writes `TIMESTAMP` values in UTC.
 - `get_unix_timezone_from_mysql_timezone` (`:268-285`) walks `zoneinfo.available_timezones()`. That is a `set`:
@@ -656,8 +666,8 @@ The two trees differ in behaviour **only in the loader** (spec 13.04), which the
    scratch count, canary and scratch-partition reads do not run, and no `REPLACE` or `DROP PARTITION` is
    printed (§3.10).
 2. **Canary hash** (11.04 §3.3.5 `* EXCEPT (_version, is_deleted)`): `(_version)` alone when the table has no
-   `is_deleted` column. When the source has its own `is_deleted` column, that column is excluded and filtered
-   on as if it were the delete flag, and `_is_deleted` stays inside the hash (§3.6). Tables with an expression
+   delete marker and no `_sign` column; otherwise the markers present (`is_deleted`, `_is_deleted`,
+   `__is_deleted`) and `_sign` are excluded too and the live side is filtered to live rows (§3.6). Tables with an expression
    key are skipped without a log line. (The pooled ratio is resolved: both specs now judge each canary table
    on its own, D-13.08-4.)
 3. **Rewind key**: resolved. Zero or several candidates are refused, as 11.04 §3.5 states (D-13.08-7).
@@ -687,11 +697,15 @@ The two trees differ in behaviour **only in the loader** (spec 13.04), which the
   `\` and `'` backslash-escaped.
 - `mysql_to_ch(type, nullable)`: the first matching regex in `MYSQL_TYPE_MAP` (`:73-86`), default `String`,
   wrapped in `Nullable(...)` when nullable. Used only for the drift suggestions. Notes: `datetime` with no
-  precision maps to `DateTime64(3)`, `time` to `String`, `bit` to `String`.
+  precision maps to `DateTime64(3)`, `time` to `String`, `bit(1)` (or bare `bit`) to `Bool` as on the streaming
+  path, `bit(n)` for n > 1 to `String`, `tinyint(1)` and `tinyint` to `Int8`, and any `tinyint` with `unsigned`
+  (`tinyint(1) unsigned` included) to `UInt8` (D-13.08-34).
 - `parse_mysql_ddl(text)`: walks the lines from the first `CREATE TABLE` up to the first line starting with
   `)`. Every line starting with a backtick is a column: `(name, type, nullable, generated)`.
-  - The type is `\S+` plus an optional `(...)`, `unsigned` and `zerofill`, so an `enum('a','b c')` type is
-    truncated at the space. This affects only the suggestion.
+  - The type is `COLUMN_TYPE_PATTERN`: a keyword, an optional parenthesised argument list read with quoted
+    strings as units, then optional `unsigned` and `zerofill`. An `enum('a b','c,d','e)')` or `set(...)` type is
+    kept whole, with spaces, commas and parentheses inside the values (D-13.08-33). It used to be `\S+`, which
+    truncated such a type at the first space.
   - Quoted literals are blanked before the `NOT NULL` and `GENERATED ALWAYS` tests.
 - `column_drift(mysql_cols, ch_cols)`:
   - `writable` = live columns whose `default_kind` is not `MATERIALIZED` or `ALIAS`.
@@ -749,6 +763,10 @@ gives 54 passed, 1 skipped):
 - `sink-connector/python/db_load/tests/test_mysql_resync.py::TestParseMysqlDdl::test_columns_in_order_with_nullability_and_generated`
   and `...::TestParseMysqlDdl::test_index_and_constraint_lines_are_not_columns` cover §3.16 `parse_mysql_ddl`.
 - `sink-connector/python/db_load/tests/test_mysql_resync.py::TestTypeSuggestion::test_common_types` covers `mysql_to_ch`.
+- `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestEnumAndSetColumns` (D-13.08-33),
+  `...::TestTinyintAndBit` (D-13.08-34), `...::TestCanaryFilter` and `...::TestCanaryRatioQuery` (D-13.08-35) cover
+  the ENUM/SET type parse, the `tinyint ... unsigned` and `bit(1)` suggestions and the delete-marker handling of
+  the canary query. Offline, with a recording stand-in for the ClickHouse client.
 - `sink-connector/python/db_load/tests/test_mysql_resync.py::TestDrift::test_no_drift_when_every_writable_source_column_exists`,
   `...::TestDrift::test_source_only_column_is_reported_and_generated_is_ignored`,
   `...::TestDrift::test_materialized_target_column_does_not_satisfy_a_source_column`,
@@ -824,8 +842,8 @@ dumps), ClickHouse and connector (`binary.handling.mode: base64`, offsets in
 - `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_z_patch_refuses_an_empty_restore_suffix` (D-13.08-11)
 
 Acceptance criteria: binary and `TIMESTAMP` values reloaded by `patch` hash-equal the connector's for the
-configured `binary.handling.mode` (met end to end for `base64` with `--loader-cmd`, test above; the default
-loader command renders `bytes` mode). Met by the S1 fixes: the legacy-engine
+configured `binary.handling.mode` (met end to end for `base64`, the default on both sides; the test above
+passes `--loader-cmd` explicitly, which the default no longer needs). Met by the S1 fixes: the legacy-engine
 `_sign` equals 1; every canary table must pass on its own; `rewind-sql` refuses a forward move and a key it
 cannot see; `patch` refuses a suffix that names a selected schema and never recreates an unmarked table under
 the scratch name.
@@ -858,7 +876,8 @@ the scratch name.
 
 - **FM-13.08-3 Binary columns installed in a different representation**
   - **Trigger**: a repaired table has a BLOB, BINARY, VARBINARY or BIT column, and the connector runs with
-    `binary.handling.mode=bytes` (the default; lower-case hex) or `base64` with line-wrapped dump text.
+    `binary.handling.mode=bytes` (lower-case hex; Debezium's own default, which the connector overrides) or
+    `base64` with line-wrapped dump text.
   - **Behaviour**: the binary transform is unreachable because `is_binary_datatype` receives the ClickHouse
     type `String` (`clickhouse_loader.py:399`, both loaders). The dump text is inserted verbatim, count
     reconciliation passes, and `REPLACE` installs it.
@@ -870,7 +889,7 @@ the scratch name.
     `patch --apply` from the same dump. Until then, exclude binary-column tables with `--tables`.
   - **RTO**: one reload of the affected tables (unmeasured).
   - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_base64_mode_keeps_bit_and_spatial_hex`
-  - **FIXED**: D-13.08-1 (= D-13.04-3). The loader renders binary, BIT and spatial values as the connector does; resync gets the default (`bytes`, lower-case hex), and a connector running `binary.handling.mode=base64` needs `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`.
+  - **FIXED**: D-13.08-1 (= D-13.04-3). The loader renders binary, BIT and spatial values as the connector does; resync gets the default (`base64`, as the connector's default) with no flag, and a connector set explicitly to `binary.handling.mode=bytes` needs `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode bytes"`.
 
 - **FM-13.08-4 TIMESTAMP values shifted by a randomly chosen DST zone**
   - **Trigger**: the packaged loader runs on a date when DST zones are at `+00:00` (northern winter), and the
@@ -1055,13 +1074,13 @@ the scratch name.
 
 - **FM-13.08-18 Source is MySQL 8.4 or later**
   - **Trigger**: `dump` against a server that no longer has `SHOW MASTER STATUS` (replaced by `SHOW BINARY LOG STATUS`).
-  - **Behaviour**: `mysqlsh` fails, and `RuntimeError("mysqlsh SHOW MASTER STATUS failed ...")` is raised (`mysql_resync.py:276-279`).
-  - **Detection**: loud: traceback, exit 1.
-  - **Blast radius**: no resync is possible.
-  - **Recovery**: none in the tool. Capture the position by hand and write `binlog_position_<stamp>.json` before running `dump`. The kept-file branch then skips the capture.
-  - **RTO**: minutes.
-  - **Test**: GAP: a test feeding a `SHOW BINARY LOG STATUS` result, expecting a captured position.
-  - **DEFECT**: D-13.08-20. The position capture uses a statement removed in MySQL 8.4.
+  - **Behaviour**: `capture_binlog_position` inspects `@@version` via `binary_log_status_statement` and executes `SHOW BINARY LOG STATUS` on MySQL >= 8.2 (`SHOW MASTER STATUS` on older versions).
+  - **Detection**: if binary logging is disabled or privileges are missing, `RuntimeError("SHOW BINARY LOG STATUS returned no row ...")` is raised loudly (exit 1).
+  - **Blast radius**: none.
+  - **Recovery**: not needed; position capture succeeds on MySQL 8.0 and 8.4+.
+  - **RTO**: zero.
+  - **Test**: `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestBinlogStatusCapture` and live MySQL 8.4 e2e (`test_mysql_04_resync.py`, `test_mysql_08_2_11_1_regressions.py`).
+  - **FIXED**: D-13.08-20. Position capture selects `SHOW BINARY LOG STATUS` on MySQL >= 8.2.
 
 - **FM-13.08-19 A child process hangs**
   - **Trigger**: `mysqlsh` dump, the loader, or `zstd | wc` stalls (stuck NFS, network partition inside a pipeline).
@@ -1117,14 +1136,14 @@ the scratch name.
   - **FIXED**: D-13.08-9. The connector must be attested stopped and its offset row idle.
   - **DEFECT**: D-13.08-16, D-13.08-17 and D-13.08-28. Failover safety, binlog retention and KeeperMap support remain unchecked.
 
-Summary: 22 failure modes, 8 DEFECT, 9 GAP.
+Summary: 22 failure modes, 7 DEFECT, 8 GAP.
 
 ---
 
 ## 7. Defect Register
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | FIXED (with D-13.04-3): rendered as the connector stores them; default `bytes` (lower-case hex), other modes via `--loader-cmd ... --binary_handling_mode`. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: binary columns loaded as the dump's base64 text |
+| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | FIXED (with D-13.04-3): rendered as the connector stores them; default `base64` (as the connector's default), other modes via `--loader-cmd ... --binary_handling_mode`. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: binary columns loaded as the dump's base64 text |
 | D-13.08-2 | S1 | packaged (loader) | `ch_sink_tools/db_load/clickhouse_loader.py:268-285,347,517` | reproduced (9/30 hash seeds pick a DST zone in January) | FIXED (with D-13.04-2): deterministic `UTC` for a `tzUtc` dump; `@.json` linked into the per-table directory. Test `test_loader_s1_fixes.py::TestDumpTimezoneMapping`. Was: the first `+00:00` zone in set hash order, shifting summer values 1–2 h when a DST zone was picked |
 | D-13.08-3 | S1 | both | `mysql_resync.py:353` (loader skips `_sign`) + connector DDL `_sign Int8` with no default | code-read | FIXED: the scratch copy gets `MODIFY COLUMN _sign DEFAULT 1` before the load (the connector's live-row value, `PreparedStatementFieldMapper.handleReplacingMergeTreeDeleteColumn`) and any `_sign != 1` blocks the `REPLACE` (`SIGN_MISMATCH`); test `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestLegacySignTable`. Was: legacy-engine reloaded rows got `_sign = 0` and vanished from `_sign > 0` readers while the tool reported `REPLACED_OK` |
 | D-13.08-4 | S1 | packaged (tool) | `mysql_resync.py:507,519` | reproduced (1000/1000 plus 0/5 → all `REPLACED_OK`, exit 0) | FIXED: each canary table's own ratio is compared with the threshold; test `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestPerTableCanary::test_each_canary_table_must_pass_on_its_own`. Was: the threshold applied to the pooled ratio, so a table whose rows all differ passed |
@@ -1143,7 +1162,7 @@ Summary: 22 failure modes, 8 DEFECT, 9 GAP.
 | D-13.08-17 | S2 | packaged | `mysql_resync.py:611` | code-read (restates FM-11.04-5) | Binlog retention at the recorded position is never checked |
 | D-13.08-18 | S3 | packaged | `mysql_resync.py:496,561-563` | code-read | Verify and reconcile use a plain `count()`. A running connector or key-collapsing merges produce false `REPLACED_VERIFY_FAIL` / `COUNT_MISMATCH` |
 | D-13.08-19 | S3 | packaged | `mysql_resync.py:450` | code-read | Exact engine-name check rejects `Replicated*` and `Shared*` `ReplacingMergeTree`, so the tool is unusable on replicated clusters |
-| D-13.08-20 | S3 | packaged | `mysql_resync.py:277` | code-read (MySQL 8.4 removed `SHOW MASTER STATUS`; not verified offline) | Position capture fails on MySQL 8.4 and later |
+| D-13.08-20 | S3 | packaged | `ch_sink_tools/db_load/mysql_resync.py` (`binary_log_status_statement`, `capture_binlog_position`) | reproduced live on MySQL 8.4.11 (`SHOW MASTER STATUS` removed) + unit tests | FIXED: selects `SHOW BINARY LOG STATUS` on MySQL >= 8.2 and `SHOW MASTER STATUS` on older versions. Tests: `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestBinlogStatusCapture`. |
 | D-13.08-21 | S3 | packaged | `mysql_resync.py:595-599,246` | reproduced (`subprocess.run` with a `None` argument raises `TypeError`) | FIXED: (by the D-13.08-7 fix) `rewind-sql` requires `--ch-host` and an existing `--ch-config` and exits 1 with a message otherwise; test `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_unreadable_offset_table_is_refused`. Was: `--ch-config` without `--ch-host` crashed with `TypeError`, and a missing `--ch-config` file was silently ignored |
 | D-13.08-22 | S3 | packaged | `mysql_resync.py:231,334,364` | code-read | No timeout on the `mysqlsh` dump, the loader or the `zstd \| wc` children |
 | D-13.08-23 | S3 | packaged | `mysql_resync.py:182-185,369,435,455,538,547,597` | reproduced (`database='my'db'`, `INSERT INTO db.t; DROP TABLE x`) | Schema and table names are put into string literals unescaped, and `--offset-table` is put into SQL verbatim |
@@ -1156,6 +1175,9 @@ Summary: 22 failure modes, 8 DEFECT, 9 GAP.
 | D-13.08-30 | S4 | packaged | `mysql_resync.py:492-495,540-546,580` | reproduced (dry run prints no `REPLACE`/`DROP PARTITION`, rc 0) | A dry run without `--skip-load` shows no replacement plan, and exits 0 even when the apply would fail (drift, missing table, engine) |
 | D-13.08-31 | S4 | packaged | `mysql_resync.py:465-469` | code-read | Scratch databases and tables are never cleaned up |
 | D-13.08-32 | S4 | both | `sink-connector/python/pyproject.toml` (`requires-python = ">=3.6"`) | code-read | The tool needs 3.7 or later (`from __future__ import annotations`) and the loader 3.9 or later (`zoneinfo`) |
+| D-13.08-33 | S3 | packaged | `ch_sink_tools/db_load/mysql_resync.py` (`COLUMN_TYPE_PATTERN`, `parse_mysql_ddl`) | reproduced offline (`enum('a b','c')` parsed as `enum('a`) | FIXED: the type is read with quoted values as units. Tests: `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestEnumAndSetColumns`. |
+| D-13.08-34 | S3 | packaged | `ch_sink_tools/db_load/mysql_resync.py` (`MYSQL_TYPE_MAP`) | reproduced offline (`tinyint(1) unsigned` suggested `Int8`, `bit(1)` suggested `String`) | FIXED: `tinyint ... unsigned` is `UInt8`, `bit(1)` is `Bool`, `bit(n>1)` stays `String`. Tests: `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestTinyintAndBit`. |
+| D-13.08-35 | S3 | packaged | `ch_sink_tools/db_load/mysql_resync.py` (`canary_filter`, `canary_ratio`) | reproduced offline (a live table with `_is_deleted`, `__is_deleted` or `_sign` kept it in the hash and unfiltered, so deleted rows lowered the canary ratio) | FIXED: `canary_filter` excludes and filters every delete-marker spelling and `_sign`, naming only columns the live table has. Tests: `sink-connector/python/db_load/tests/test_mysql_resync_d2.py::TestCanaryFilter` and `::TestCanaryRatioQuery`. |
 
 Not determinable offline:
 - How MySQL Shell encodes binary columns: base64, and whether line-wrapped.

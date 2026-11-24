@@ -175,11 +175,14 @@ public class KeylessTablePreflight {
                 return;
             }
 
+            // Read once and reused: the banner advice depends on whether GIPK is
+            // actually ON, so the real value is passed rather than assumed.
+            boolean gipk = gipkEnabledGlobally(conn);
             if (!keyless.isEmpty()) {
-                log.error(warningPreExisting(keyless));
+                log.error(warningPreExisting(keyless, gipk));
                 return;
             }
-            if (gipkEnabledGlobally(conn)) {
+            if (gipk) {
                 log.info("Keyless-table check passed: no table without a PRIMARY KEY or UNIQUE key, and "
                         + "sql_generate_invisible_primary_key is ON so any created from now on will "
                         + "receive one from MySQL.");
@@ -492,8 +495,19 @@ public class KeylessTablePreflight {
         List<java.util.regex.Pattern> includes =
                 compilePatterns(props.getProperty(DdlCaptureFilter.TABLE_INCLUDE_LIST));
 
+        List<java.util.regex.Pattern> databaseExcludes =
+                compilePatterns(props.getProperty(DdlCaptureFilter.DATABASE_EXCLUDE_LIST));
+
         List<String> inScope = new ArrayList<>();
         for (String table : keyless) {
+            // The schema is everything before the first dot of the fully-qualified name.
+            int dot = table.indexOf('.');
+            String database = dot < 0 ? table : table.substring(0, dot);
+            if (matchesAny(databaseExcludes, database)) {
+                log.info("Keyless table {} is in a database excluded by database.exclude.list, so "
+                        + "it is not replicated and is not reported.", table);
+                continue;
+            }
             if (matchesAny(excludes, table)) {
                 log.info("Keyless table {} is excluded by table.exclude.list, so it is not "
                         + "replicated and is not reported.", table);
@@ -529,7 +543,11 @@ public class KeylessTablePreflight {
                 continue;
             }
             try {
-                patterns.add(java.util.regex.Pattern.compile(pattern));
+                // Case-insensitive, like Debezium's own table filters and DdlCaptureFilter:
+                // MySQL names are case-insensitive on lower_case_table_names=1/2 servers, so
+                // a list written in another case must still match the name the scan returns.
+                patterns.add(java.util.regex.Pattern.compile(pattern,
+                        java.util.regex.Pattern.CASE_INSENSITIVE));
             } catch (java.util.regex.PatternSyntaxException e) {
                 log.warn("Ignoring unparseable table list pattern '{}' when deciding whether a "
                         + "keyless table blocks startup: {}", pattern, e.getMessage());
@@ -602,8 +620,15 @@ public class KeylessTablePreflight {
                 + "Set " + SKIP_PROPERTY + "=true to stop reporting them (the divergence remains).";
     }
 
-    static String warningPreExisting(List<String> keyless) {
-        return KeylessTableWarning.banner(keyless, true)
+    /**
+     * @param keyless fully-qualified {@code db.table} names found keyless.
+     * @param gipkEnabled whether {@code sql_generate_invisible_primary_key} is
+     *                    actually ON; the banner's advice differs, and claiming
+     *                    ON when it is OFF would tell the operator that new
+     *                    tables are safe when they are not.
+     */
+    static String warningPreExisting(List<String> keyless, boolean gipkEnabled) {
+        return KeylessTableWarning.banner(keyless, gipkEnabled)
                 + "\nREPLICATING ANYWAY -- THESE TABLES WILL DIVERGE until each one above has a "
                 + "primary key. Their ClickHouse copies are NOT trustworthy in the meantime: rows "
                 + "MySQL considers distinct collapse into one, and an UPDATE or DELETE cannot be "

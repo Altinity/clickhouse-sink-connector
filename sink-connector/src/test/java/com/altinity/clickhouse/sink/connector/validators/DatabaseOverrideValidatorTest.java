@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.validators;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.Disabled;
@@ -43,11 +44,11 @@ public class DatabaseOverrideValidatorTest {
     @DisplayName("A malformed database override map is rejected when the configuration is loaded")
     public void aMalformedOverrideMapIsRejectedWhenTheConfigIsLoaded() {
         // No ':' -- parseSourceToDestinationDatabaseMap returns null.
-        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(props("employees")));
+        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props("employees"))));
         // Invalid destination name -- parseSourceToDestinationDatabaseMap throws.
-        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(props("employees:1x")));
+        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props("employees:1x"))));
         // Duplicated source -- parseSourceToDestinationDatabaseMap throws.
         assertThrows(ConfigException.class,
-                () -> new ClickHouseSinkConnectorConfig(props("employees:target_a,employees:target_b")));
+                () -> new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props("employees:target_a,employees:target_b"))));
     }
 }

@@ -3,7 +3,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,9 +12,10 @@ import org.junit.jupiter.api.Test;
  * source host stepped forward while rows were versioned, or the connector host
  * stepped forward at a clock-seeded start and every row was clamped to it).
  *
- * <p>{@code VersionHighWaterMark.seedFloor} ignores a mark whose floor is more
- * than {@code PLAUSIBLE_FUTURE_MS} (24 h) past the connector clock and seeds from
- * the clock instead. Every row the previous run wrote carries a version at or
+ * <p>{@code VersionHighWaterMark.seedFloor} used to ignore a mark whose floor is more
+ * than {@code PLAUSIBLE_FUTURE_MS} (24 h) past the connector clock and seed from the
+ * clock instead; it now seeds from any mark up to {@code MAX_FUTURE_MARK_MS} ahead.
+ * Every row the previous run wrote carries a version at or
  * below that mark, so the fallback seeds the new run BELOW rows already in
  * ClickHouse: their keys keep their stale values under {@code FINAL} until the
  * source clock reaches the stepped instant. A too-high floor only delays the
@@ -48,8 +48,6 @@ public class VersionHighWaterMarkClockStepTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.02-4: a mark more than 24 h ahead of the connector clock is discarded and "
-            + "the floor is seeded from the clock, below versions the previous run already wrote")
     @DisplayName("a mark more than 24 h in the future must not seed the floor below it")
     public void futureMarkBeyondThePlausibilityWindowDoesNotLowerTheFloor() throws Exception {
         VersionHighWaterMarkTest.FakeClickHouse fake = new VersionHighWaterMarkTest.FakeClickHouse();

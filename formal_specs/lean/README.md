@@ -309,9 +309,9 @@ type-checks every module (previously it built only the lakefile; use
 
 ---
 
-## 5. Coverage of the Constitution's thirteen invariants
+## 5. Coverage of the Constitution's fifteen invariants
 
-Which of `specs/CONSTITUTION.md` I1–I13 have a Lean proposition and theorem today.
+Which of `specs/CONSTITUTION.md` I1–I15 have a Lean proposition and theorem today.
 The same table is kept in the Constitution §5.1; this copy is the one next to the code.
 
 | Invariant | Status | Declarations |
@@ -320,15 +320,17 @@ The same table is kept in the Constitution §5.1; this copy is the one next to t
 | I2 Deterministic Version Monotonicity | proved at the restart boundary on the shipped statics (`VersionFloor.lean`); within-run monotonicity of the shipped formula is model only (`liveVersion i = 2*i`) | `restart_boundary`, `version_ge_floor`, `dispatch_control_preserves_state`; `Engine.lean` |
 | I3 Eventual Convergence | proved | `ReplicationConvergence`, `master_replication_convergence` |
 | I4 Sorting Key Mutation Integrity | proved | `PKRelocationSoundness`, `update_pk_relocation_soundness` |
-| I5 DDL Barrier Quiescence | in progress (concurrent change) | — |
+| I5 DDL Barrier Quiescence | proved: the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty (`DdlBarrier.lean`) | `ddl_applies_only_when_no_pending_rows`, `old_predicate_insufficient`, `queues_empty_insufficient` |
 | I6 Column Authority | none (`ColumnKind` modelled, no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
-| I8 Durable Offset Quiescence | in progress (concurrent change); control-record half under I12 | — |
+| I8 Durable Offset Quiescence | proved for the handoff FIFO, including the in-process restart reset (`OffsetFifo.lean`); control-record half under I12 | `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe`, `restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo` |
 | I9 Loud Failure | row half proved: an unconvertible row record halts the pipeline, never an acknowledged heartbeat (spec 01.06 §3.1) | `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Separation of Concerns | none (architectural rule) | — |
 | I11 Drop-in Upgrade Safety | proved, conditional on `GapMono`; the boundary clause is proved for the seeded floor | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono`, `VersionFloor.restart_boundary` |
 | I12 Snapshot Completion & Control-Record Offset Progress | proved | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
 | I13 Generated-Column Type Integrity | proved | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
+| I14 Bounded Bookkeeping | none (a static property of the source, enforced by the validator's pass 8) | — |
+| I15 Bounded, Declared Recovery | none (operational; empirical, see the chaos and recovery-time harnesses of spec 01.08 section 6) | — |
 
 `ReplayIdempotency` is a stated proposition (spec 02.04), not a numbered invariant and not yet proved.
 

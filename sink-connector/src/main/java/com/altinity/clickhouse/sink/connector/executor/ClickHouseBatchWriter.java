@@ -3,6 +3,8 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.MissingTargetTableException;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -207,8 +209,7 @@ public class ClickHouseBatchWriter {
         try {
             // If replication history is enabled, add the records to the history table.
             String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-            addRecordsToHistoryTable(records, sourceTimeZone, serverTimeZone);
+            addRecordsToHistoryTable(records, sourceTimeZone);
 
             Map<String, List<ClickHouseStruct>> topicToRecordsMap =
                     new ConcurrentHashMap<>();
@@ -329,15 +330,13 @@ public class ClickHouseBatchWriter {
                         e);
             }
             if (isInterrupt(e)) {
-                // The task is being shut down. Nothing was acknowledged, so
-                // this batch is replayed from the last committed offset on the
-                // next start; treating a shutdown as a persistence failure
-                // would turn a clean stop into a restart loop.
+                // A normal return lets the inline caller continue to later
+                // rows or DDL and commit past this unsuccessful batch. Preserve
+                // cancellation, but propagate failure so replay remains possible.
                 Thread.currentThread().interrupt();
-                log.warn("Interrupted while persisting records to ClickHouse. "
-                        + "The batch was not acknowledged and will be replayed "
-                        + "from the last committed offset.", e);
-                return;
+                throw new BatchPersistenceException(
+                        "Interrupted while persisting or acknowledging a batch of records to ClickHouse"
+                                + topicsSuffix(records), e);
             }
             // Anything else means the batch did not reach ClickHouse.
             // Swallowing it here has exactly the same effect as the break
@@ -351,8 +350,30 @@ public class ClickHouseBatchWriter {
             throw e instanceof BatchPersistenceException
                     ? (BatchPersistenceException) e
                     : new BatchPersistenceException(
-                            "Failed to persist a batch of records to ClickHouse", e);
+                            "Failed to persist a batch of records to ClickHouse" + topicsSuffix(records), e);
         }
+    }
+
+    /**
+     * Names the distinct source topics of a batch, so a batch failure says which topics it could
+     * not persist. At most 10 names are listed; the rest are counted.
+     */
+    static String topicsSuffix(List<ClickHouseStruct> records) {
+        java.util.Set<String> topics = new java.util.LinkedHashSet<>();
+        if (records != null) {
+            for (ClickHouseStruct record : records) {
+                if (record != null && record.getTopic() != null) {
+                    topics.add(record.getTopic());
+                }
+            }
+        }
+        if (topics.isEmpty()) {
+            return "";
+        }
+        java.util.List<String> names = new ArrayList<>(topics);
+        String listed = String.join(", ", names.subList(0, Math.min(10, names.size())));
+        int more = names.size() - Math.min(10, names.size());
+        return " (topics: " + listed + (more > 0 ? ", and " + more + " more" : "") + ")";
     }
 
     /**
@@ -386,11 +407,11 @@ public class ClickHouseBatchWriter {
     }
 
     /**
-     * Whether this failure is an interrupt, i.e. the task is shutting down
-     * rather than failing to write.
+     * Whether cancellation appears in this failure or the thread's state.
      *
      * @param e the exception to inspect
-     * @return true when an InterruptedException appears in the cause chain
+     * @return true when an InterruptedException appears in the cause chain or
+     *         the current thread is interrupted
      */
     private static boolean isInterrupt(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
@@ -430,12 +451,13 @@ public class ClickHouseBatchWriter {
 
     /**
      * Function to persist records to binlog history table when replication history mode is enabled.
+     * The ClickHouse zone is resolved only when replication history is enabled (spec 07.03 section 3.1.2):
+     * the configured {@code clickhouse.datetime.timezone}, which is mandatory; an unresolvable one throws.
      * @param records
      * @param sourceTimeZone
-     * @param serverTimeZone
      * @throws SQLException
      */
-    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone) throws SQLException {
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) && records != null && !records.isEmpty()) {
             String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
             String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
@@ -443,6 +465,7 @@ public class ClickHouseBatchWriter {
             DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                     records.get(0), databaseConn);
 
+            String serverTimeZone = getServerTimeZone(config).getId();
             BinLogHistory binLogHistory = new BinLogHistory();
             binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
         }
@@ -539,30 +562,19 @@ public class ClickHouseBatchWriter {
     }
 
     /**
-     * Returns the ClickHouse server timezone.
+     * Returns the ClickHouse-side zone the sink writes DateTime values in: the configured
+     * {@code clickhouse.datetime.timezone}, which is mandatory (Spec 07.03 section 3.1.2). The config
+     * constructor refuses an unset value, and an unresolvable one throws here. The server's zone is never read.
      *
      * @param config the connector configuration
-     * @return a ZoneId representing the server timezone
+     * @return the configured ClickHouse zone
      */
     public ZoneId getServerTimeZone(
             ClickHouseSinkConnectorConfig config) {
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.
                         CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if (!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e) {
-            log.error("**** Error parsing user provided timezone:" +
-                    userProvidedTimeZone + e.toString());
-        }
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(systemConnection());
+        return TimeZoneResolver.clickHouseZone(userProvidedTimeZone);
     }
 
     /**
@@ -682,21 +694,6 @@ public class ClickHouseBatchWriter {
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
-        // Supplied as a supplier, not a snapshot: this executor is built BEFORE
-        // the metadata-retry block below, which is exactly when a table created
-        // by DDL (rather than by auto-create) first gets its sorting key. A
-        // value captured here would still be empty, and the writer would then
-        // silently skip the UPDATE tombstone.
-        final DbWriter sortingKeySource = writer;
-        PreparedStatementExecutor preparedStatementExecutor =
-                new PreparedStatementExecutor(
-                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
-                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
-                        writer != null ? writer.getSignColumn() : null,
-                        writer != null ? writer.getVersionColumn() : null,
-                        writer != null ? writer.getDatabaseName() : databaseName,
-                        getServerTimeZone(this.config),
-                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format(
                     "*** TABLE METADATA not retrieved for " +
@@ -711,6 +708,20 @@ public class ClickHouseBatchWriter {
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
+                // A table the catalog positively reports missing can never
+                // settle by retrying. Left as a retry it fills the handoff FIFO
+                // and trips the hard cap, which reads as a performance problem
+                // and names neither the table nor the cause (spec 08.07
+                // section 3.1). Fail the batch so its offset is not committed
+                // and the records replay once the table exists.
+                if (writer != null && writer.isTargetTableAbsent()) {
+                    throw new MissingTargetTableException(String.format(
+                            "Target table %s.%s does not exist in ClickHouse. Create the table, "
+                                    + "or enable auto.create.tables, to resume replication. Failed the "
+                                    + "batch so its offset is not committed; the records replay from "
+                                    + "the last committed offset.",
+                            writer.getDatabaseName(), writer.getTableName()));
+                }
                 log.error(String.format(
                         "*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next " +
@@ -720,6 +731,25 @@ public class ClickHouseBatchWriter {
                 return false;
             }
         }
+        // The executor is built only now, after the metadata-retry block above:
+        // the version / sign / delete columns it binds are resolved by
+        // DbWriter.updateColumnNameToDataTypeMap(), so a writer first built
+        // while the table was missing has none of them until that refresh. An
+        // executor built before it captured null and, for a custom
+        // ReplacingMergeTree(ver, del), omitted both columns from the INSERT
+        // (stored as 0: a delete landed as a live row). Past this point the
+        // writer is non-null and its metadata is retrieved.
+        final DbWriter resolvedWriter = writer;
+        PreparedStatementExecutor preparedStatementExecutor =
+                new PreparedStatementExecutor(
+                        resolvedWriter.getReplacingMergeTreeDeleteColumn(),
+                        resolvedWriter.isReplacingMergeTreeWithIsDeletedColumn(),
+                        resolvedWriter.getSignColumn(),
+                        resolvedWriter.getVersionColumn(),
+                        resolvedWriter.getDatabaseName(),
+                        getServerTimeZone(this.config),
+                        // A supplier, not a snapshot: the sorting key is read on use.
+                        resolvedWriter::getSortingKeyColumns);
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
         // This step creates an ordered list of segments, each a Map of

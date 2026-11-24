@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlColumnFilter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Inject;
@@ -9,8 +10,11 @@ import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Collections;
 import java.util.List;
@@ -27,6 +31,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Singleton
 public class MySQLDDLParserService implements DDLParserService {
+
+    /**
+     * Logger for the statements that are dropped because no translation could
+     * ever apply to them.
+     */
+    private static final Logger LOG = LogManager.getLogger(MySQLDDLParserService.class);
 
     /**
      * The name of the database being processed.
@@ -57,6 +67,18 @@ public class MySQLDDLParserService implements DDLParserService {
      * §3.2.2).
      */
     private long ddlEventTimestampMs;
+
+    /**
+     * The column filter every listener this service creates applies to a
+     * CREATE/ALTER it translates, and the SOURCE database the filter is
+     * matched against (Spec 06.04 §3.6). {@link DdlColumnFilter#NONE} until
+     * the caller supplies one, which keeps every column of every statement
+     * when no column list is configured.
+     */
+    private DdlColumnFilter columnFilter = DdlColumnFilter.NONE;
+
+    /** Source database of the statement; null when the record carries none. */
+    private String columnFilterDatabase;
 
     /**
      * The rebuild plan of the last {@code parseSql} (Spec 06.09 §3.1); null
@@ -93,6 +115,12 @@ public class MySQLDDLParserService implements DDLParserService {
     @Override
     public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
         this.ddlEventTimestampMs = ddlEventTimestampMs;
+    }
+
+    @Override
+    public void setColumnFilter(DdlColumnFilter columnFilter, String sourceDatabase) {
+        this.columnFilter = columnFilter == null ? DdlColumnFilter.NONE : columnFilter;
+        this.columnFilterDatabase = sourceDatabase;
     }
 
     @Override
@@ -142,7 +170,11 @@ public class MySQLDDLParserService implements DDLParserService {
 
         String clickHouseResult = null;
 
-        MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));
+        // The bundled grammar is a compiled artifact, so a construct it lacks
+        // is bridged here rather than in a grammar file; the statement as the
+        // source wrote it still reaches the listener for its regex fallbacks
+        // and for the text of any diagnostic (MySqlDdlNormalizer).
+        MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(MySqlDdlNormalizer.normalize(sql)), true));
 
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         MySqlParser parser = new MySqlParser(tokens);
@@ -155,14 +187,64 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        listener.setColumnFilter(columnFilter, columnFilterDatabase);
         this.primaryKeyRebuildPlan = null;
         this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
-        walker.walk(listener, parser.root());
+        ParserRuleContext tree = parseForTranslation(sql, lexer, parser);
+        if (tree != null) {
+            walker.walk(listener, tree);
+        }
         this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
         this.historyBulkCloses = listener.historyBulkCloses();
 
         return clickHouseResult;
+    }
+
+    /**
+     * Parses {@code sql}, tolerating a parse failure only where nothing could
+     * have been emitted from it anyway.
+     *
+     * <p>{@code ErrorListenerImpl.syntaxError} throws
+     * {@code RuntimeException("Error parsing DDL")} the moment the grammar
+     * rejects a token, and that exception escapes to the CDC caller, which
+     * stops replication for EVERY table on the host. Losing the whole stream to
+     * one statement is justified only when the statement could have changed a
+     * replicated table. Inside the handled statement kinds that is exactly what
+     * a parse failure risks -- {@code ALTER TABLE t FROBNICATE COLUMN c} must
+     * keep throwing rather than silently diverge -- but outside them the
+     * translator has no {@code enter*} callback at all, so a walk over the tree
+     * produces nothing whatever the tree says.</p>
+     *
+     * <p>Outside the handled kinds a failure is therefore answered with
+     * {@code null}, meaning "there is no statement here to translate", and the
+     * caller walks nothing. That is the same outcome a successful parse would
+     * have had -- no emission, no acknowledgement -- without paying for a
+     * second parse and without leaving a throw path open: a recovered tree can
+     * still fail, and the grammar detail that made the first parse fail is
+     * exactly the one the retry would meet again.</p>
+     *
+     * <p>The handled kinds are unaffected: they are parsed by the strict parser
+     * and their failures stay fatal, which is what keeps a real gap in table
+     * DDL loud instead of silent.</p>
+     *
+     * @param sql the statement as the source wrote it, for the handler decision;
+     * @param parser the parser already wired with the strict error listener;
+     * @return the tree to walk, or null when the statement's kind has no handler
+     *         and the grammar could not read it.
+     */
+    private ParserRuleContext parseForTranslation(String sql, MySqlLexer lexer, MySqlParser parser) {
+        if (MySqlDdlNormalizer.handlesStatementKind(sql)) {
+            return parser.root();
+        }
+        try {
+            return parser.root();
+        } catch (RuntimeException e) {
+            LOG.warn("Dropping a statement of a kind this connector does not translate, which"
+                    + " the bundled grammar could not parse either; no ClickHouse DDL could have"
+                    + " been emitted from it: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -178,7 +260,9 @@ public class MySQLDDLParserService implements DDLParserService {
     public String parseSql(String sql, String tableName,  StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
         String clickHouseResult = null;
 
-        MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));
+        // Same bridging as the three-argument overload; the statement as the
+        // source wrote it still reaches the listener.
+        MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(MySqlDdlNormalizer.normalize(sql)), true));
 
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         MySqlParser parser = new MySqlParser(tokens);
@@ -191,10 +275,14 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        listener.setColumnFilter(columnFilter, columnFilterDatabase);
         this.primaryKeyRebuildPlan = null;
         this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
-        walker.walk(listener, parser.root());
+        ParserRuleContext tree = parseForTranslation(sql, lexer, parser);
+        if (tree != null) {
+            walker.walk(listener, tree);
+        }
         this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
         this.historyBulkCloses = listener.historyBulkCloses();
 

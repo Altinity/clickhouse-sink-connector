@@ -95,6 +95,31 @@ loud report is the fallback of Invariant I9, not a substitute for the fix.
 The `ADD COLUMN` path (`ClickHouseAlterTable.alterTable`) passes the table
 name through so the report is attributable there too.
 
+### 3.4 `YEAR`: the stream value 1900 is the zero year `0000`
+MySQL stores `YEAR` in one byte `b`: `b = 0` is the year `0000` (its number is 0), and `b` from 1 is the year
+`1900 + b`, so the real years run from 1901 to 2155. Debezium delivers `YEAR` as `INT32` with the logical name
+`io.debezium.time.Year`, mapped to `Int32` (`ClickHouseDataTypeMapper`, the `(INT32, Year.SCHEMA_NAME)` entry).
+The binlog row decoder adds 1900 to every byte, so the stream carries the zero year as **1900**, a year MySQL
+cannot hold. Before this section the connector stored 1900, a year that is not in the source. A reader that
+trusts the column then sees a real-looking year, and a value comparison against MySQL (`y + 0` is 0) differs.
+
+Rule (`ClickHouseDataTypeMapper.zeroYearValue`, called from `convert(...)` for a field whose schema name is
+`io.debezium.time.Year`, before the integer bind): the value 1900 is bound as 0, the number MySQL returns for
+`YEAR 0000`; every other value is bound unchanged. A field of any other schema is never touched, because 1900
+is a real value of every other integer column. The mapped 0 is the number the source holds, so it is not a
+lossy conversion: it is not reported, and `clamp.out.of.range=false` does not refuse it. It follows the same
+bind as before: `setObject` for an `Int32`, `Int64`, `UInt32` or `UInt64` target, `setInt` for a narrower one.
+
+Limits, measured and not changed here:
+- A zero `YEAR` read by the **snapshot** arrives as 2000. The JDBC driver converts it before the connector
+  sees the value, and 2000 is a real year, so the sink cannot tell it from a source 2000. Setting the driver
+  property `yearIsDateType=false` through `driver.` and through `database.` left the stored value at 2000
+  (measured with an initial snapshot of a table holding `YEAR 0000`, 1901, 2024 under each setting). To find
+  the rows, query the source: `SELECT COUNT(*) FROM <t> WHERE <year column> = 0`; their ClickHouse rows hold 2000.
+- Rows already stored as 1900 stay 1900 until the table is resynchronised (spec 11.04). On the source,
+  the same query counts them.
+- A history-mode `before`/`after` text carries Debezium's rendering of the value, so a zero year is 1900 there.
+
 ---
 
 ## 4. Invariants Preserved
@@ -131,6 +156,17 @@ name through so the report is attributable there too.
   types); `MySqlDDLParserListenerImplTest.testSerialIsUnsignedNotNullKey()` —
   `SERIAL` is `UInt64 NOT NULL` and the sorting key on CREATE, `UInt64` (not
   `Nullable`) on `ADD COLUMN`.
+- §3.4: `ZeroTimestampYearCallSiteTest.theStreamValueOfTheZeroYearIsBoundAsZero()` — 1900 on a `Year` field is
+  bound as 0; `ZeroTimestampYearCallSiteTest.everyOtherYearIsBoundUnchanged()` — 0, 1, 1899, 1901, 1999, 2000,
+  2024 and 2155 are not touched; `ZeroTimestampYearCallSiteTest.aWiderIntegerTargetReceivesTheMappedYearToo()`
+  and `ZeroTimestampYearCallSiteTest.aNarrowIntegerTargetReceivesTheMappedYearToo()` — the mapping reaches the
+  `setObject` and the `setInt` bind;
+  `ZeroTimestampYearCallSiteTest.aPlainIntegerColumnHoldingNineteenHundredIsNotRemapped()` and
+  `ZeroTimestampYearCallSiteTest.aNamedSchemaThatIsNotYearIsNotRemapped()` — 1900 in any other integer or
+  `DATE` field is a real value and is not remapped; `ZeroTimestampYearCallSiteTest.theMappedYearIsNotAReportedConversion()`
+  — nothing is counted and strict mode does not refuse it.
+- §3.4 invariant: for every stored `YEAR` byte the mapped stream value is the number MySQL returns, only the stream
+  value 1900 changes, and 1900 comes only from the byte 0.
 
 ---
 
@@ -183,4 +219,14 @@ Procedures referenced by every Failure Modes section of domains 07 and 04:
   - **RTO**: as FM-07.01-2; unmeasured.
   - **Test**: `MySqlDDLParserListenerImplTest.testUnsignedSynonymsAndZerofillMapToUInt()` pins every known spelling; GAP: a test that an integer type name the normaliser does not recognise fails the DDL loudly instead of defaulting to signed.
 
-Summary: 4 failure modes, 3 DEFECT, 1 GAP.
+- **FM-07.01-5 `YEAR 0000` read by the snapshot**
+  - **Trigger**: a `YEAR` column holds `0000` (a legacy writer under `sql_mode=''`) and the connector takes an initial snapshot or a resync reads the table through the snapshot.
+  - **Behaviour**: the JDBC driver delivers the zero year as 2000 before the connector sees it, so ClickHouse stores 2000, a real year, where MySQL holds 0. The stream path stores 0 (§3.4).
+  - **Detection**: none at the sink. On the source, `SELECT COUNT(*) FROM <t> WHERE <year column> = 0` counts the rows whose ClickHouse copy reads 2000 after a snapshot.
+  - **Blast radius**: only the rows holding `0000`; row counts intact.
+  - **Recovery**: no setting recovers the value (§3.4 limits); change the source value to NULL or a real year, or accept the stored 2000 for those rows and exclude the column from the value comparison.
+  - **RTO**: unmeasured.
+  - **Test**: none; the stream half is `ZeroTimestampYearCallSiteTest.theStreamValueOfTheZeroYearIsBoundAsZero()`.
+  - **DEFECT**: the snapshot value is converted by the driver before the sink; a connector-side fix needs a snapshot read that does not convert the year.
+
+Summary: 5 failure modes, 4 DEFECT, 1 GAP.

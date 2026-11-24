@@ -11,6 +11,7 @@ Specifies the final phase of DDL replication: executing the translated DDL on Cl
 - **Capture filter**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/DdlCaptureFilter.java` (`isCaptured(database, table, props)`; the list property names are its `DATABASE_INCLUDE_LIST` / `DATABASE_EXCLUDE_LIST` / `TABLE_INCLUDE_LIST` / `TABLE_EXCLUDE_LIST` constants, read from Debezium's `RelationalDatabaseConnectorConfig`)
 - **Statement kind**: `MySqlDDLParserListenerImpl.isDropOrTruncateStatement()` (set by `enterDropTable`, `enterTruncateTable`, `enterDropDatabase`), `MySQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`, `PostgreSQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`
 - **Failure type**: `DDLReplicationException` (same package)
+- **Helpers**: `DebeziumChangeEventCapture.isSnapshotOffsetValue()`, `splitStatements()`, `recordDdlMetrics()`, `resolveErrorTableName()`, `retainCapturedRenamePairs()`, `compiledIgnoreRule()`; `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DdlTableNames.java` (`qualifiedName()`, `renamePairs()`, `affectedQualified()`)
 
 ---
 
@@ -90,6 +91,26 @@ loop to be left normally after a failure.
    through §3.1 like any terminal failure. Swallowing the interrupt (the
    previous behaviour: log and continue) kept a stopping engine retrying for
    up to `MAX_RETRIES` x 10 s with the stop request lost.
+6. **A DDL that succeeded is never executed again.** `MAX_RETRIES` is the
+   number of ATTEMPTS, and at least one is always made: `errors.max.retries=0`
+   used to skip the loop, so the DDL was never executed yet was acknowledged.
+   Within one record, each step carries a done-flag (the ClickHouse statements,
+   the replication-history bulk closes, the primary-key rebuild, the
+   back-fill task, the audit row). A failure of a step AFTER the statements
+   succeeded retries only the steps that have not completed; re-running a
+   succeeded `DROP COLUMN` or `RENAME` is not safe to rely on being a no-op.
+7. **Statements are split outside quotes.** The translated text is one
+   statement per line, but a newline inside a quoted literal or identifier (a
+   multi-line `COMMENT '...'`) is part of that statement. `splitStatements`
+   splits on newlines outside single quotes, double quotes and backticks
+   (honouring backslash escapes) and skips blank statements; each statement is
+   executed and its schema visibility awaited (spec 06.01 FM-06.01-5).
+8. **Error table and metric.** The failure record goes to
+   `default.error.table`, read through the connector config so its default
+   (`replica_source_error`, the table `ErrorLogger` writes to) applies; the
+   property is never read raw (it is null when unset). The DDL is counted in
+   `clickhouse.sink.ddl` with `fail=false` on success and `fail=true` on
+   failure, by the milliseconds measured from before its execution.
 
 ---
 
@@ -105,7 +126,10 @@ when any of the following holds, in this order:
 1. `disable.ddl=true` — no DDL is replicated at all.
 2. The statement matches an entry of `ignore.ddl.regex` (a `||`-separated list
    of regular expressions, `find` semantics) or one of the bundled patterns
-   (`IgnoreDDLRegexLoader`).
+   (`IgnoreDDLRegexLoader`). An entry that does not compile, or a blank entry
+   (which would match every DDL), refuses the start (`IgnoreDdlRegexPreflight.check`).
+   An entry that still fails when it is evaluated throws `DDLReplicationException`
+   and halts the pipeline; it is never logged and skipped (spec 01.03 FM-01.03-2).
 3. **The DDL belongs to a table the connector does not capture.** The source
    database is read from the schema-change record (`sourceDatabaseName`: the
    key's `databaseName`/`db`, else the value's `source.db`; never the
@@ -150,7 +174,12 @@ Then, **after** `parseSql` (which is what computes the statement kind):
    `enterTruncateTable` / `enterDropDatabase`; the token helpers in both parser
    services test the first significant tokens). `ALTER TABLE ... DROP COLUMN`,
    `DROP INDEX` and `ALTER COLUMN ... DROP DEFAULT` are schema evolution and
-   are never caught. The statement is logged at WARN and skipped.
+   are never caught. A skipped `TRUNCATE` is logged at ERROR; a skipped `DROP TABLE`
+   or `DROP DATABASE` is logged at WARN. Both are skipped, never executed. The
+   TRUNCATE ERROR names the table, the binlog position of the event (`file:pos` from
+   its source offset, or `not available` when the event carries none) and the
+   consequence: ClickHouse keeps the rows the source truncated, so the table no
+   longer matches MySQL until it is resynced (`ch-mysql-resync`, spec 11.04).
 
    **Snapshot-phase DDL is exempt.** The suppression applies only to streaming
    DDL (`isSnapshotDDL(sr)` is false). With `enable.snapshot.ddl=true` Debezium
@@ -163,13 +192,50 @@ Then, **after** `parseSql` (which is what computes the statement kind):
    `disable.drop.truncate` freezes drops seen WHILE STREAMING, never the
    snapshot schema.
 
+   **Snapshot classification.** The source offset's `snapshot` entry is a
+   `Boolean` for some connector versions and a String for others. It is a
+   snapshot when it is `true` or one of `TRUE`, `INITIAL`, `LAST`, `BLOCKING`,
+   `INITIAL_ONLY` (case-insensitive, trimmed); `false`, `FALSE`, an absent
+   offset, an empty value or any other type is streaming. A blind cast to
+   `Boolean` or `String` threw `ClassCastException` for the other form.
+   Snapshot DDL is ignored unless `enable.snapshot.ddl=true`.
+
+   **Qualifiers and RENAME pairs.** Each table a DDL affects is matched in ITS
+   database: the qualifier of its `tableChanges` id, or of its rename side, is
+   kept (MySQL sources; PostgreSQL's `schema.table` is not a database), and only
+   an unqualified table is matched in the record's own database. A multi-table
+   `RENAME TABLE a TO b, c TO d` is narrowed to the pairs where either side is
+   captured (renamed into or out of the replicated set); an all-captured
+   statement is unchanged and one with no captured pair is ignored, so an
+   excluded table is never renamed on ClickHouse. The ignore-rule regexes
+   (`ignore.ddl.regex` and the bundled patterns) are compiled once and cached.
+
    **Deliberate, operator-chosen divergence.** With `disable.drop.truncate=true`
    ClickHouse keeps rows and tables the source removed, so the replica is no
    longer equal to MySQL; the option exists for targets that must retain
    history and is off by default. Before this revision the option was dead: it
    was tested BEFORE `parseSql` set the flag it reads (always false), and the
    flag was raised by ANY `DROP` token, so had it worked it would also have
-   swallowed column drops and index drops.
+   swallowed column drops and index drops. Each skipped TRUNCATE is logged at
+   ERROR (item 5) because a silent skip leaves the replica divergent with no
+   operator-visible sign.
+
+   The WARN names what was kept and the setting that kept it, in the same form as
+   the other `disable.drop.truncate` WARNs: `DROP of [<tables>] kept because
+   disable.drop.truncate=true: ...` (a skipped DROP TABLE or DROP DATABASE; the
+   TRUNCATE of item 5 has its own ERROR line).
+
+   **Partition DROP and TRUNCATE are always ignored.** `ALTER TABLE t DROP PARTITION p`
+   and `ALTER TABLE t TRUNCATE PARTITION p` are ignored by the bundled rules whatever
+   `disable.drop.truncate` is set to. The source removes the partition's rows and
+   ClickHouse keeps them: a deliberate divergence. It is ignored, not refused, so that
+   routine partition rotation does not halt a replica. For a captured table the
+   connector logs one WARN naming the table and the partition
+   (`Ignoring DROP PARTITION p of table t: ...`). A partition operation on an
+   uncaptured table is silent, like any uncaptured DDL.
+   Limitation (open): the bundled rules match anywhere in the statement, so a
+   multi-clause `ALTER` that contains a partition DROP or TRUNCATE is ignored as a
+   whole, including its other clauses. Splitting the clauses is not done in this revision.
 
 ---
 
@@ -177,6 +243,8 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 - **Invariant I5 (DDL Barrier Quiescence)**: Cache invalidation takes effect before any post-DDL rows begin query formulation.
 - **Capture parity (Prime Directive)**: the sink applies DDL for exactly the tables whose rows it replicates (§3.3 rule 3).
 - **Invariant I9 (Loud Failure)**: A DDL that cannot be applied halts the pipeline instead of being swallowed while offsets advance past it.
+- **Invariant I5/I9 (At-most-once execution per attempt budget)**: a DDL whose ClickHouse statements succeeded is not executed again by the retry loop, and a retry budget of zero still makes one attempt (§3.2 item 6).
+- **Capture parity (Prime Directive)**: a table is matched against `table.include.list` / `table.exclude.list` in its own database, and a multi-table RENAME applies only the pairs touching a captured table (§3.3).
 
 ---
 
@@ -186,6 +254,9 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 - `DdlIgnoreRulesTest.ddlOutsideIncludeListIsIgnored`, `DdlIgnoreRulesTest.excludeAndDatabaseListsApply`, `DdlIgnoreRulesTest.multiTableAndNoLists` — §3.3 rule 3 through `checkIfDDLNeedsToBeIgnored` with schema-change records carrying `databaseName` and `tableChanges`.
 - `DdlIgnoreRulesTest.mysqlFlagIsStatementKind`, `DdlIgnoreRulesTest.postgresFlagIsStatementKind` — §3.3 rule 5: `DROP TABLE`/`TRUNCATE`/`DROP DATABASE|SCHEMA` set the flag; `DROP COLUMN`, `DROP INDEX`, `DROP DEFAULT` do not (pre-fix: any `DROP` token).
 - `DdlIgnoreRulesTest.disableDropTruncateIsScopedAndLive` — §3.5 through `processEveryChangeRecord`: with `disable.drop.truncate=true` a STREAMING `DROP TABLE`/`TRUNCATE` returns without executing and is recorded as `lastIgnoredDDL`; a `DROP COLUMN` still reaches execution; without the property the `DROP TABLE` reaches execution (pre-fix: the property was dead).
+- `DdlIgnoreRulesTest.skippedTruncateLogsAtErrorNamingTableAndPosition` — §3.3 item 5: a streaming `TRUNCATE TABLE` skipped under `disable.drop.truncate=true` is logged at ERROR, naming the table, the binlog `file:pos` of the event and the resync requirement, and is not executed.
+- `DdlIgnoreRulesTest.skippedTruncateWithoutPositionSaysSo` — §3.3 item 5: a skipped TRUNCATE whose event carries no source offset says the position is `not available`, it is not guessed.
+- `DdlIgnoreRulesTest.skippedDropTableStaysAtWarn` — §3.3 item 5: a skipped `DROP TABLE` stays at WARN (only TRUNCATE is raised).
 - `DdlIgnoreRulesTest.disableDropTruncateExemptsSnapshotDdl` — §3.5 snapshot exemption: a snapshot `DROP TABLE` (source offset `snapshot=INITIAL`, `enable.snapshot.ddl=true`) reaches execution despite `disable.drop.truncate=true`, so the snapshot schema bootstrap is not frozen.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — a DDL whose drain aborts throws `DDLReplicationException` out of `processEveryChangeRecord` rather than returning null.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull()` — single-threaded mode drains as a no-op instead of an NPE.
@@ -197,6 +268,10 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 - `DdlFailureLoudTest.ddlExecutionFailureAfterRetriesExhaustedIsLoud()` —
   `ddl.retry=true` with the retry budget exhausted: `DDLReplicationException`
   carrying the last failure as its cause.
+- `DdlSnapshotOffsetTest` — §3.3 snapshot classification: `snapshotOffsetValuesAreClassified`, `snapshotDdlIsIgnoredUnlessEnabled`, `streamingDdlIsNotSnapshotDdl`, `streamingDropIsStillSuppressedByDisableDropTruncate` (Boolean and String offsets, no `ClassCastException`; a streaming `DROP TABLE` with a Boolean `snapshot=false` is still suppressed).
+- `DdlRetryAndMetricsTest` — §3.2 items 6-8: `postDdlFailureDoesNotReExecuteTheDdl`, `zeroMaxRetriesStillAttemptsOnce`, `splitStatementsKeepsMultiLineLiteralsWhole`, `splitStatementsSeparatesOnTopLevelNewlines`, `splitStatementsHonoursEveryQuoteKind`, `multiLineCommentIsExecutedOnce`, `alterWithRenameRunsTwoStatements`, `errorTableDefaultsToReplicaSourceError`, `configuredErrorTableIsUsed`, `successfulDdlIsCountedAsNotFailed`, `failedDdlIsCountedAsFailed`.
+- `ErrorTableDefaultConfigTest` — `unsetErrorTableDefaultsToReplicaSourceError`, `configuredErrorTableIsHonoured`, `configDefaultMatchesDeclaredConstant`: the config default of `default.error.table` is `replica_source_error`, not the option's own key.
+- `DdlRenameAndQualifierFilteringTest` — §3.3 qualifiers and RENAME pairs: `onlyTheCapturedRenamePairIsKept`, `pairRenamedIntoTheCapturedSetIsKept`, `noneOrAllCapturedPairs`, `singlePairAndOtherStatementsAreUnchanged`, `renamePairsAreMatchedInTheirOwnDatabase`, `nonMySqlSourceIgnoresTheQualifier`, `tableChangesIdQualifierIsRespected`, `renameOutsideTheListsIsIgnored`, `qualifiedNameRespectsQuotes`, `renamePairsParsesQuotedPairs`, `affectedQualifiedHonoursKeepQualifiers`, `mySqlSourceDetection`, `ignoreRulesAreCompiledOnce`, `cachedIgnoreRuleStaysCorrect`.
 - `DdlDrainDeadlockTest` — the drain still aborts a genuinely undrainable queue and stays quiescent+paused when it returns (spec 06.01).
 - Mutation check: restoring `if (retryDDLProperty == false) { break; }` turns
   `ddlExecutionFailureWithoutRetryIsLoud` red.
@@ -257,7 +332,7 @@ The contract of this spec is binary: a DDL is either applied on ClickHouse and t
 - **FM-06.08-6 A needed DDL is dropped by an ignore rule or the capture filter**
   - **Trigger**: an over-broad `ignore.ddl.regex` (or a bundled pattern), `disable.ddl=true`, `disable.drop.truncate=true`, or capture lists that exclude a table whose rows are nevertheless replicated.
   - **Behaviour**: `checkIfDDLNeedsToBeIgnored()` drops the statement before the drain (§3.3), records it in `lastIgnoredDDL`, commits nothing for it (the next acknowledged record covers its offset).
-  - **Detection**: one INFO naming the rule (WARN for `disable.drop.truncate`: `Ignoring DROP/TRUNCATE statement because disable.drop.truncate=true...`). Later rows fail loudly only for a missing column (spec 08.04).
+  - **Detection**: one INFO naming the rule (for `disable.drop.truncate`, ERROR `Ignoring TRUNCATE of table <t> because disable.drop.truncate=true; ...` with the binlog position and the resync requirement (§3.3 item 5), and WARN `DROP of [...] kept because disable.drop.truncate=true...` for a dropped table or database; WARN for a partition DROP or TRUNCATE on a captured table: `Ignoring DROP PARTITION p of table t...`). Later rows fail loudly only for a missing column (spec 08.04).
   - **Blast radius**: silent schema divergence of the affected tables (deliberate for `disable.drop.truncate`).
   - **Recovery**: narrow the rule, restart, apply the dropped DDL by hand on ClickHouse, re-synchronise the table if rows were affected (spec 11.04).
   - **RTO**: operator time; unmeasured.
@@ -273,4 +348,13 @@ The contract of this spec is binary: a DDL is either applied on ClickHouse and t
   - **Test**: GAP: a DdlIgnoreRulesTest-style unit test for a rename whose target is captured and whose source is not, asserting the connector refuses it loudly with the remedy instead of applying it.
   - **DEFECT**: a rename that moves an uncaptured table onto a captured name is applied half-way and breaks the table's replication.
 
-Summary: 7 failure modes, 4 DEFECT, 3 GAP.
+- **FM-06.08-8 A step after the DDL fails (history close, key rebuild, audit row, acknowledgement)**
+  - **Trigger**: the ClickHouse statements succeeded, then a later step of the same record throws (ClickHouse refuses the bookkeeping write, the offset commit fails).
+  - **Behaviour**: with `ddl.retry=true` the loop retries only the steps not yet done; the ClickHouse statements are not executed again (§3.2 item 6). Without `ddl.retry`, or after `MAX_RETRIES` attempts, `DDLReplicationException` is thrown and the offset is not advanced, so a restart re-delivers the DDL, whose statements are replay-safe (spec 06.04 §4).
+  - **Detection**: ERROR `Error executing DDL` with the failing step's cause, a row in the error table, `clickhouse.sink.ddl{fail="true"}`.
+  - **Blast radius**: replication stops at this DDL; no loss.
+  - **Recovery**: fix the failing step's cause (ClickHouse availability, permissions on the history/error tables) and restart; the DDL is re-delivered.
+  - **RTO**: `MAX_RETRIES` x `ddlRetryBackoffMs` (10 s) with `ddl.retry=true`, otherwise immediate, plus the operator's repair time.
+  - **Test**: `DdlRetryAndMetricsTest.postDdlFailureDoesNotReExecuteTheDdl`.
+
+Summary: 8 failure modes, 4 DEFECT, 3 GAP.

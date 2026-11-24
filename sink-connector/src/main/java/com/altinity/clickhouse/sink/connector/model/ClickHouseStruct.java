@@ -54,6 +54,10 @@ public class ClickHouseStruct {
      */
     private static final int MIN_GTID_SEGMENTS = 2;
 
+    /** Set once the first malformed {@code source.gtid} has been logged. */
+    private static final java.util.concurrent.atomic.AtomicBoolean MALFORMED_GTID_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     /**
      * Shared ObjectMapper for JSON serialization. Thread-safe for read/serialization operations.
      */
@@ -489,7 +493,7 @@ public class ClickHouseStruct {
                 // indicates the time that the change was made in the database.
                 this.setTs_ms((Long) source.get(TS_MS));
             }
-            if (convertedValue.get(TS_MS) != null) {
+            if (convertedValue.get(TS_MS) instanceof Long) {
                 this.setDebezium_ts_ms((Long) convertedValue.get(TS_MS));
             }
             if (fieldNames.contains(SNAPSHOT)
@@ -525,22 +529,22 @@ public class ClickHouseStruct {
             if (fieldNames.contains(SERVER_THREAD)
                     && source.get(SERVER_THREAD) != null
                     && source.get(SERVER_THREAD) instanceof Integer) {
-                this.setThread((Integer) convertedValue.get(SERVER_THREAD));
+                // Read the value that was type-checked: the thread id lives in the
+                // source struct. Reading it from the envelope map (which has no
+                // such key) unboxed null, threw, and the catch below then skipped
+                // GTID, LSN and database parsing for the record.
+                this.setThread((Integer) source.get(SERVER_THREAD));
             }
             if (fieldNames.contains(GTID)
                     && source.get(GTID) != null
                     && source.get(GTID) instanceof String) {
-                String[] gtidArray = ((String) source.get(GTID)).split(":");
                 // uuid:n (classic) or uuid:tag:n (MySQL 8.3+ tagged GTID): the
-                // transaction number is the LAST segment. Parsing only the
-                // two-segment form left every tagged transaction with gtid unset,
-                // which silently dropped it into the sequence-number version
-                // domain while its untagged neighbours stayed in the snowflake
-                // domain, so it lost every merge against them. A value without a
-                // colon (MariaDB domain-server-seq) is not a MySQL GTID and leaves
-                // gtid unset (spec 02.01 section 3.1).
-                if (gtidArray.length >= MIN_GTID_SEGMENTS) {
-                    this.setGtid(Long.parseLong(gtidArray[gtidArray.length - 1].trim()));
+                // transaction number is the LAST segment. A malformed value leaves
+                // gtid unset instead of aborting the remaining fields
+                // (parseGtidTransaction, spec 02.01 section 3.1).
+                long transaction = parseGtidTransaction((String) source.get(GTID));
+                if (transaction >= 0) {
+                    this.setGtid(transaction);
                 }
             }
             if (fieldNames.contains(LSN)
@@ -556,6 +560,53 @@ public class ClickHouseStruct {
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);
         }
+    }
+
+    /**
+     * The transaction number of a single MySQL GTID: the LAST {@code :}-separated
+     * segment of {@code uuid:n} (classic) or {@code uuid:tag:n} (tagged, MySQL 8.3+),
+     * which must be a non-negative decimal integer (spec 02.01 section 3.1).
+     *
+     * <p>Never throws. A value with fewer than {@link #MIN_GTID_SEGMENTS} segments
+     * (MariaDB {@code domain-server-seq}), an empty or non-numeric last segment (a
+     * GTID set range {@code uuid:1-5}, a malformed or truncated value) or one that
+     * overflows a {@code long} yields {@code -1}: the record keeps {@code gtid}
+     * unset and every other source field is still read. Before this method
+     * {@code Long.parseLong} threw out of {@link #setAdditionalMetaData}, whose
+     * catch-all then skipped the LSN and database fields of the record. A
+     * colon-separated value that is not numeric is logged once per process at
+     * WARN.</p>
+     *
+     * @param gtid the {@code source.gtid} text, may be {@code null}
+     * @return the transaction number, or {@code -1} when there is none
+     */
+    public static long parseGtidTransaction(String gtid) {
+        if (gtid == null) {
+            return UNINITIALIZED_VALUE;
+        }
+        String[] segments = gtid.split(":", -1);
+        if (segments.length < MIN_GTID_SEGMENTS) {
+            return UNINITIALIZED_VALUE;
+        }
+        String last = segments[segments.length - 1].trim();
+        boolean numeric = !last.isEmpty();
+        for (int i = 0; numeric && i < last.length(); i++) {
+            char c = last.charAt(i);
+            numeric = c >= '0' && c <= '9';
+        }
+        if (numeric) {
+            try {
+                return Long.parseLong(last);
+            } catch (NumberFormatException overflow) {
+                numeric = false;
+            }
+        }
+        if (MALFORMED_GTID_WARNED.compareAndSet(false, true)) {
+            log.warn("source.gtid '{}' has no numeric transaction number in its last ':' segment; the "
+                    + "record keeps gtid unset and is versioned without it (spec 02.01 section 3.1). "
+                    + "Further malformed GTIDs are not logged.", gtid);
+        }
+        return UNINITIALIZED_VALUE;
     }
 
     /**
@@ -711,7 +762,32 @@ public class ClickHouseStruct {
         if (!(sourceObj instanceof Struct)) {
             return null;
         }
-        return sourcePositionOf((Struct) sourceObj);
+        Struct source = (Struct) sourceObj;
+        SourcePosition position = null;
+        if (source.schema().field(BINLOG_FILE) != null && source.schema().field(BINLOG_POS) != null) {
+            position = SourcePosition.ofBinlogOffset(srd.sourceOffset());
+        }
+        if (position == null) {
+            position = sourcePositionOf(source);
+        }
+        return position == null ? null : position.withGtidTransaction(gtidTransactionOf(source));
+    }
+
+    /**
+     * The GTID transaction number in a Debezium {@code source} struct (see
+     * {@link #parseGtidTransaction}), or {@code -1} when it has none. It travels with
+     * the record's {@link SourcePosition} into the version sequence (spec 02.01
+     * section 3.1.2).
+     *
+     * @param source the {@code source} struct of a change event
+     * @return the transaction number, or {@code -1}
+     */
+    static long gtidTransactionOf(Struct source) {
+        if (source.schema() == null || source.schema().field(GTID) == null) {
+            return UNINITIALIZED_VALUE;
+        }
+        Object gtid = source.get(GTID);
+        return gtid instanceof String ? parseGtidTransaction((String) gtid) : UNINITIALIZED_VALUE;
     }
 
     /**
@@ -744,18 +820,26 @@ public class ClickHouseStruct {
     }
 
     /**
-     * The position of this record in the source transaction log, built from the
-     * {@code file}/{@code pos}/{@code row} (MySQL, MariaDB) or {@code lsn} (PostgreSQL)
-     * captured from the record's {@code source} struct.
+     * The position of this record in the source transaction log. MySQL/MariaDB
+     * prefer the original record's restart cursor (spec 01.02 section 3.4), then
+     * fall back to captured {@code file}/{@code pos}/{@code row}. PostgreSQL keeps
+     * its captured {@code lsn}. The position carries the record's GTID transaction
+     * number, if any ({@link SourcePosition#withGtidTransaction}).
      *
      * @return the position, or {@code null} when the record carries none
      */
     public SourcePosition getSourcePosition() {
-        SourcePosition binlogPosition = SourcePosition.ofBinlog(file, pos, row);
-        if (binlogPosition != null) {
-            return binlogPosition;
+        SourcePosition position = null;
+        if (file != null && !file.isEmpty() && sourceRecord != null && sourceRecord.value() != null) {
+            position = SourcePosition.ofBinlogOffset(sourceRecord.value().sourceOffset());
         }
-        return SourcePosition.ofLsn(lsn);
+        if (position == null) {
+            position = SourcePosition.ofBinlog(file, pos, row);
+        }
+        if (position == null) {
+            position = SourcePosition.ofLsn(lsn);
+        }
+        return position == null ? null : position.withGtidTransaction(gtid);
     }
 
     /**
@@ -999,13 +1083,26 @@ public class ClickHouseStruct {
      * least) the earlier commit's timestamp field and wins on its higher GTID
      * transaction number. The encoding is unchanged (spec 02.01 section 3.1).</p>
      *
+     * <p>Without {@code versionTs} -- the Kafka Connect path, where no version
+     * sequence runs -- the timestamp field is {@link #versionTimestamp()}: the later of
+     * {@code source.ts_ms} and the envelope {@code ts_ms}. The envelope time is when
+     * Debezium read the event; Debezium reads the binlog in commit order and the
+     * value is fixed in the Kafka record, so it is commit-ordered (up to a clock step
+     * on the Debezium host) and identical on every redelivery from Kafka. A long
+     * transaction whose statement time is older than an already-committed short one
+     * therefore no longer ranks below it (spec 02.01 section 3.1, path 1 and 4).</p>
+     *
+     * <p>The no-GTID fallback composes the Kafka offset with the timestamp WITHOUT
+     * truncating it to the 22-bit field ({@link SnowFlakeId#compose}): identical to
+     * {@code SnowFlakeId.generate} below 2^22, and strictly increasing in the offset
+     * above it, where the truncation wrapped offset 4194304 below 4194303.</p>
+     *
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
-                long snowflakeTs = this.versionTs > 0 ? this.versionTs : this.ts_ms;
-                this.version = SnowFlakeId.generate(snowflakeTs, this.gtid, false);
+                this.version = SnowFlakeId.generate(versionTimestamp(), this.gtid, false);
             } else {
                 this.version = this.gtid;
             }
@@ -1015,8 +1112,29 @@ public class ClickHouseStruct {
             this.version = this.lsn;
         } else if (this.ts_ms > 0) {
             // No ordering key from the source (e.g. MySQL with GTID disabled).
-            // Fall back to the source commit timestamp plus the Kafka offset.
-            this.version = SnowFlakeId.generate(this.ts_ms, this.kafkaOffset, false);
+            // Fall back to the commit-ordered timestamp plus the Kafka offset.
+            long timestamp = versionTimestamp();
+            this.version = timestamp >= SnowFlakeId.SNOWFLAKE_EPOCH && this.kafkaOffset >= 0
+                    ? SnowFlakeId.compose(timestamp, this.kafkaOffset)
+                    // Not a snowflake-encodable instant or offset: the previous formula.
+                    : SnowFlakeId.generate(this.ts_ms, this.kafkaOffset, false);
         }
+    }
+
+    /**
+     * The timestamp (ms) that feeds the timestamp field of a snowflake version: the
+     * commit-order-floored {@link #versionTs} set by the lightweight version sequence
+     * when present, otherwise the later of {@link #ts_ms} (statement time) and
+     * {@link #debezium_ts_ms} (the envelope time Debezium read the event at). Shared
+     * by {@link #calculateVersion} and the history version so that they agree (spec
+     * 02.01 section 3.1, 3.5 b).
+     *
+     * @return the timestamp in ms, {@code 0} when the record carries none
+     */
+    public long versionTimestamp() {
+        if (this.versionTs > 0) {
+            return this.versionTs;
+        }
+        return Math.max(this.ts_ms, this.debezium_ts_ms);
     }
 }

@@ -719,6 +719,69 @@ public class DebeziumOffsetManagement {
     }
 
     /**
+     * Whether a {@link #reset()} abandoned units whose rows are still
+     * unaccounted for (spec 09.01 §3.6).
+     * <p>
+     * {@link #hasUnwrittenBatches()} is the FIFO's emptiness, and an abandoned
+     * unit leaves the FIFO WITHOUT ever being acknowledged -- so the set can be
+     * empty while rows it owed are still absent from ClickHouse. Every consumer
+     * of the FIFO's emptiness must therefore keep seeing an empty FIFO (the
+     * stop-drain, the DDL-drain wait, the start-time refusal, all of which
+     * would hang or refuse to restart on a latch), and exactly one consumer
+     * must not: the control-record commit, whose offset is the connector's
+     * CURRENT position and would move past those rows (spec 09.04 §3).
+     * </p>
+     * <p>
+     * Armed by {@link #reset()} only when it actually abandoned a unit; cleared
+     * when a unit assigned AFTER that reset is acknowledged, which is the first
+     * moment anything durably written proves the redelivered stream reached the
+     * FIFO's head. Not cleared by a handoff: a handoff is a read.
+     * </p>
+     *
+     * @return true while an abandonment is unproven.
+     */
+    public static boolean hasUnprovenAbandonment() {
+        return unprovenAbandonment;
+    }
+
+    /**
+     * Sequence below which an abandonment is still unproven, or
+     * {@link Long#MAX_VALUE} when nothing is armed. A unit assigned at or above
+     * this value belongs to the engine that replaced the one whose units were
+     * abandoned, so acknowledging it proves the redelivery advanced.
+     */
+    private static volatile long unprovenAbandonmentBelowSequence = Long.MAX_VALUE;
+
+    /**
+     * True from a {@link #reset()} that abandoned at least one unit until a
+     * unit assigned afterwards is acknowledged (spec 09.01 §3.6, spec 09.04
+     * FM-09.04-4). Written under the class monitor by {@link #reset()} and by
+     * the drain, read without it by the heartbeat's gate on the Debezium
+     * thread; volatile is enough because a stale read can only leave the gate
+     * ARMED (the conservative direction) for one heartbeat.
+     */
+    private static volatile boolean unprovenAbandonment = false;
+
+    /**
+     * Clears the abandonment latch once an acknowledged unit was assigned at or
+     * after the reset that armed it. Call under the class monitor after
+     * removing an acknowledged sequence.
+     *
+     * @param acknowledgedSequence the sequence just acknowledged.
+     */
+    private static void noteAcknowledgedForAbandonment(long acknowledgedSequence) {
+        if (!unprovenAbandonment || acknowledgedSequence < unprovenAbandonmentBelowSequence) {
+            return;
+        }
+        unprovenAbandonment = false;
+        unprovenAbandonmentBelowSequence = Long.MAX_VALUE;
+        log.info("Abandonment latch cleared: unit {} (assigned after the reset that abandoned earlier "
+                + "units) is written and acknowledged, so the redelivered stream has reached the FIFO's "
+                + "head. Control-record commits resume; the committed offset may advance again.",
+                acknowledgedSequence);
+    }
+
+    /**
      * Abandons every outstanding unit: an in-process engine restart
      * (spec 09.01 §3.8, spec 01.01 §3.3).
      * <p>
@@ -754,6 +817,12 @@ public class DebeziumOffsetManagement {
                     + "acknowledged ({} group(s) unwritten, {} unit(s) written but parked). Their "
                     + "rows were not acknowledged, so the next engine redelivers them from the "
                     + "last committed offset.", abandoned, groupToUnit.size(), completedUnits.size());
+            // Arm the latch (spec 09.01 §3.6): the FIFO is about to read as
+            // empty while these units' rows are still unaccounted for. Nothing
+            // may commit the CURRENT position until a unit of the replacing
+            // engine is durably written (spec 09.04 FM-09.04-4).
+            unprovenAbandonment = true;
+            unprovenAbandonmentBelowSequence = retiredBelowSequence;
         }
         outstandingSequences.clear();
         groupToUnit.clear();
@@ -992,6 +1061,7 @@ public class DebeziumOffsetManagement {
             acknowledgeRecords(unit.records);
             completedUnits.remove(head);
             outstandingSequences.remove(head);
+            noteAcknowledgedForAbandonment(head);
             outstandingRecords.addAndGet(-unit.records.size());
             outstandingBytes.addAndGet(-unit.bytes);
             noteBacklog();
@@ -1025,6 +1095,17 @@ public class DebeziumOffsetManagement {
             }
         }
         return -1L;
+    }
+
+    /**
+     * Clears the abandonment latch, for test isolation only. {@code reset()}
+     * deliberately does NOT clear an armed latch (an abandonment stays unproven
+     * until something is written), so a test that armed it must clear it
+     * explicitly instead of relying on the next test's {@code reset()}.
+     */
+    static synchronized void clearAbandonmentLatchForTests() {
+        unprovenAbandonment = false;
+        unprovenAbandonmentBelowSequence = Long.MAX_VALUE;
     }
 
     private static boolean carriesCommitter(List<ClickHouseStruct> batch) {

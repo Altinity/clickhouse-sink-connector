@@ -22,6 +22,10 @@ from ch_sink_tools.db.clickhouse import (
     execute_sql,
     resolve_credentials_from_config,
 )
+from ch_sink_tools.db_compare._sql_text import clickhouse_literal, clickhouse_table_reference
+from ch_sink_tools.db_compare.clickhouse_table_checksum import (
+    partition_key_within_sorting_key, sign_column_from_engine,
+)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -44,13 +48,50 @@ def get_tables_from_regex(conn):
     schema = args.clickhouse_database
     partition_clause = ""
     if args.include_partitions_regex:
-        partition_clause = f" and (database, table) in (select distinct database, table from system.parts where database = '{schema}' and match(table,'{args.tables_regex}') and active and match(partition,'{args.include_partitions_regex}'))"
+        partition_clause = (f" and (database, table) in (select distinct database, table from system.parts where database = {clickhouse_literal(schema)} "
+                            f"and match(table,{clickhouse_literal(args.tables_regex)}) and active and match(partition,{clickhouse_literal(args.include_partitions_regex)}))")
 
-    strCommand = f"select name, partition_key from system.tables where database = '{schema}' and match(name,'{args.tables_regex}') {partition_clause} order by 1"
+    strCommand = f"select name, partition_key from system.tables where database = {clickhouse_literal(schema)} and match(name,{clickhouse_literal(args.tables_regex)}) {partition_clause} order by 1"
     logging.debug(f"REGEX QUERY: {strCommand}")
     (rowset, rowcount) = execute_sql(conn, strCommand)
     x = rowset
     return x
+
+
+def build_count_sql(database, table, where, sign_column, final_per_partition, partition_key=None, partition_value=None):
+    """The count statement for one table, or one partition of it (spec 11.02 section 3.8).
+
+    Rows are read FINAL with the same row filter as the checksum side: the sign
+    of a Collapsing engine must be > 0 (``sign_column``). ``where`` is one
+    operand, parenthesised before it is ANDed onto the rest.
+    do_not_merge_across_partitions_select_final=1 is added only when
+    ``final_per_partition`` is true, that is every partition-key column is in
+    the sorting key. Otherwise a row that an UPDATE moved to another partition
+    would keep its old version visible and be counted twice
+    (https://github.com/ClickHouse/ClickHouse/issues/49685)."""
+    sql = f"select count(*) cnt from {clickhouse_table_reference(database, table)} final where 1=1"
+    if partition_value is not None and partition_key:
+        sql += f" and {partition_key} = {clickhouse_literal(partition_value)} "
+    if where:
+        sql += " and (" + where + ")"
+    if sign_column:
+        sql += f" and {sign_column} > 0"
+    if final_per_partition:
+        sql += " settings do_not_merge_across_partitions_select_final=1"
+    return sql
+
+
+def engine_full_of(conn, database, table):
+    """``engine_full`` of the table, '' when the catalog has no row for it."""
+    (rowset, rowcount) = execute_sql(conn, f"select engine_full from system.tables where database = {clickhouse_literal(database)} and name = {clickhouse_literal(table)}")
+    return rowset[0][0] if rowset else ''
+
+
+def final_per_partition_for_table(conn, database, table):
+    """True when per-partition FINAL is exact for ``table`` (partition key within the sorting key)."""
+    (rowset, rowcount) = execute_sql(conn, "select name, type, 0, 0, is_in_partition_key, is_in_sorting_key from system.columns "
+                                           f"where database = {clickhouse_literal(database)} and table = {clickhouse_literal(table)}")
+    return partition_key_within_sorting_key(list(rowset))
 
 
 def calculate_table_count(table, partition_key, clickhouse_user, clickhouse_password):
@@ -59,40 +100,41 @@ def calculate_table_count(table, partition_key, clickhouse_user, clickhouse_pass
         if rex_ignore_tables.match(table):
             logging.info("Ignoring "+table + " due to ignore_regex_tables")
             return
-    threads = []
-    threadID = 1
-    # 
+    database = args.clickhouse_database
     conn = get_connection(clickhouse_user, clickhouse_password)
-    if args.include_partitions_regex:
-        if partition_key is None:
-            (rowset, rowcount) = execute_sql(conn, f"select partition_key from system.tables where database = '{args.clickhouse_database}' and name = '{table}'")
-            partition_key = rowset[0][0] if rowset else ''
-        partition_query = f"select distinct partition from system.parts where database = '{args.clickhouse_database}' and table='{table}' and active and match(partition,'{args.include_partitions_regex}') order by partition"
-        (rowset, rowcount) = execute_sql(conn, partition_query)
-        partition_values = [row[0] for row in rowset]
-    else:
-        # No partition regex: one count over the whole table. The partition
-        # list used to be read with match(partition,'None'), which matches no
-        # partition, so every table printed 0 (spec 13.06 D-13.06-18).
-        partition_values = [None]
-    conn.close()
+    try:
+        if args.include_partitions_regex:
+            if partition_key is None:
+                (rowset, rowcount) = execute_sql(conn, f"select partition_key from system.tables where database = {clickhouse_literal(database)} and name = {clickhouse_literal(table)}")
+                partition_key = rowset[0][0] if rowset else ''
+            partition_query = (f"select distinct partition from system.parts where database = {clickhouse_literal(database)} "
+                               f"and table={clickhouse_literal(table)} and active and match(partition,{clickhouse_literal(args.include_partitions_regex)}) order by partition")
+            (rowset, rowcount) = execute_sql(conn, partition_query)
+            partition_values = [row[0] for row in rowset]
+        else:
+            # No partition regex: one count over the whole table. The partition
+            # list used to be read with match(partition,'None'), which matches no
+            # partition, so every table printed 0 (spec 13.06 D-13.06-18).
+            partition_values = [None]
+        # The same row filter as the checksum side (spec 11.02 section 3.8).
+        sign_column = getattr(args, "sign_column", "")
+        if not sign_column:
+            sign_column = sign_column_from_engine(engine_full_of(conn, database, table))
+        final_per_partition = final_per_partition_for_table(conn, database, table)
+    finally:
+        conn.close()
     conn = get_connection(clickhouse_user, clickhouse_password)
-    table_count = 0
-    for partition_value in partition_values:
-      #
-      sql = f"select count(*) cnt from {args.clickhouse_database}.{table} final where 1=1"
-      if partition_value is not None and partition_key != '':
-          sql += f" and {partition_key} = '{partition_value}' "
-      if args.where:
-          sql = sql + " and " + args.where
-      sql += " settings do_not_merge_across_partitions_select_final=1"
-      # unsafe due to https://github.com/ClickHouse/ClickHouse/issues/49685
-      #sql += " settings do_not_merge_across_partitions_select_final=1" 
-      (rowset, rowcount) = execute_sql(conn, sql)
-      table_count += rowset[0][0]
+    try:
+        table_count = 0
+        for partition_value in partition_values:
+            sql = build_count_sql(database, table, args.where, sign_column, final_per_partition, partition_key, partition_value)
+            (rowset, rowcount) = execute_sql(conn, sql)
+            table_count += rowset[0][0]
 
-    logging.info(f"Count for table {args.clickhouse_database}.{table} = {table_count}")    
-    conn.close()
+    finally:
+        conn.close()
+
+    logging.info(f"Count for table {database}.{table} = {table_count}")
 
 # hack to add the user to the logger, which needs it apparently
 old_factory = logging.getLogRecordFactory()
@@ -127,7 +169,8 @@ def main():
                         help='ClickHouse port', default=9000, required=False)
     parser.add_argument('--secure',
                         help='True or False', default=False, required=False)
-    parser.add_argument('--tables_regex', help='table regexp', required=True, default='.')
+    parser.add_argument('--sign_column', help='Column whose value > 0 marks a live row. Default: derived from the engine like the checksum side -- the sign of a (Replicated)(Versioned)CollapsingMergeTree, no filter otherwise', default='', required=False)
+    parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--include_partitions_regex', help='partitions regex', required=False, default=None)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--ignore_tables_regex',

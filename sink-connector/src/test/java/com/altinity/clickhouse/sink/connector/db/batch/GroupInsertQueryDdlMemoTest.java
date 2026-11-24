@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -182,7 +183,7 @@ public class GroupInsertQueryDdlMemoTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseStruct insert(Schema schema, int id) {
@@ -337,5 +338,54 @@ public class GroupInsertQueryDdlMemoTest {
         assertFalse(rebuilt.getLeft().contains("`name`"),
                 "an identity-only memo would still emit the pre-DDL template");
         assertNotNull(rebuilt.getRight().get("note"));
+    }
+
+    @Test
+    @DisplayName("an empty staleness re-read fails the batch and is not memoised as verified")
+    public void emptyReReadFailsTheBatchInsteadOfKeepingTheStaleMap() {
+        // The replica reports no columns at all (for example a row policy hides them): the
+        // read succeeds but proves nothing, so the cached map must not be treated as verified.
+        FakeClickHouse ch = new FakeClickHouse(false, "");
+        ch.columns.clear();
+        List<ClickHouseStruct> batch = new ArrayList<>();
+        batch.add(insert(POST, 1));
+
+        assertThrows(StaleSchemaCacheException.class,
+                () -> group(batch, cachedMap(false), ch),
+                "an empty re-read must not be read as 'the record's column is not stored'");
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN by hand after a failed batch: the retry writes the retained batch without a restart")
+    public void retryAfterManualAddColumnWritesTheRetainedBatch() {
+        // Attempt 1: the replica lacks note, the record carries it. The batch fails loudly.
+        FakeClickHouse ch = new FakeClickHouse(false, "");
+        List<ClickHouseStruct> batch = new ArrayList<>();
+        batch.add(insert(POST, 1));
+        batch.add(insert(POST, 2));
+        batch.add(insert(PRE, 3));
+        assertThrows(MissingTargetColumnException.class, () -> group(batch, cachedMap(false), ch));
+
+        // The operator runs ADD COLUMN on ClickHouse. The connector is not restarted, and its
+        // cached map is still the one from attempt 1.
+        ch.columns.add(new String[]{"note", "Nullable(String)", ""});
+
+        // Attempt 2 of the same batch re-reads and writes every row.
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                group(batch, cachedMap(false), ch);
+        int rows = 0;
+        boolean bindsNote = false;
+        for (Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> segment : segments) {
+            for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> e
+                    : segment.entrySet()) {
+                rows += e.getValue().size();
+                if (e.getKey().getLeft().contains("`note`")) {
+                    bindsNote = true;
+                }
+            }
+        }
+        assertEquals(3, rows, "every record of the retained batch is written");
+        assertTrue(bindsNote, "the two post-ALTER rows bind note from the re-read map");
+        assertEquals(2, ch.listings, "one re-read per attempt: the failed attempt memoised nothing to skip it");
     }
 }

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.antlr.CaseChangingCharStream;
 import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
@@ -49,7 +50,7 @@ public class DataTypeConverterTest {
 
     @BeforeAll
     static void setUp() {
-        config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     /**

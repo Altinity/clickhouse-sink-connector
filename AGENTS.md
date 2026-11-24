@@ -61,9 +61,14 @@ unable to hold what the source sent:
 
 - **Correct the ClickHouse side automatically** where a safe, bounded
   operation exists. A MATERIALIZED column shadowing a source value is
-  fixed with `ALTER TABLE ... MODIFY COLUMN <col> <type>`, restating the
-  type with no default expression — metadata-only, no part rewrite, on the
-  same DDL path the connector already uses for schema evolution.
+  fixed by `DBMetadata.makeColumnWritable`, which intentionally converts the
+  ClickHouse `MATERIALIZED` column to `DEFAULT` when MySQL supplies that
+  column: `ALTER TABLE ... MODIFY COLUMN <col> <type> DEFAULT <expression>`,
+  restating the existing expression (restating the type alone is a silent
+  no-op, because an omitted default clause means "leave it alone"). It is
+  metadata-only, no part rewrite, on the same DDL path the connector already
+  uses for schema evolution, and matches
+  `specs/08-schema-catalog/04-column-writability-enforcement.md`.
 - **Enforcement has two halves, and the second is easy to forget.**
   Correcting the definition fixes the write path *forward*. Rows already
   written while the definition was wrong still hold the wrong values, and

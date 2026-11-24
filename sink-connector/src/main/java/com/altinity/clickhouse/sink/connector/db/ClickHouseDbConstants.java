@@ -25,9 +25,11 @@ public class ClickHouseDbConstants {
 
     /**
      * Fragment used to delete a column in an ALTER TABLE
-     * statement.
+     * statement. ClickHouse spells it {@code DROP COLUMN}; the earlier
+     * {@code delete column} text was a syntax error.
+     * DESTRUCTIVE: only ClickHouseAlterTable.createAlterTableSyntax(REMOVE) emits it; no connector code path calls that operation, the schema-evolution path only adds columns.
      */
-    public static final String ALTER_TABLE_DELETE_COLUMN = "delete column";
+    public static final String ALTER_TABLE_DELETE_COLUMN = "drop column";
 
     /**
      * The CREATE TABLE statement keyword.
@@ -100,7 +102,8 @@ public class ClickHouseDbConstants {
     /**
      * The data type of the deleted time column, typically a date time.
      */
-    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT '" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+    // Epoch-exact DEFAULT (Spec 07.03 section 3.1.12): a quoted string would be read in the column zone.
+    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT " + DataTypeRange.DATETIME32_MAX_TTL;
     
     /**
      * The name of the column indicating whether a record

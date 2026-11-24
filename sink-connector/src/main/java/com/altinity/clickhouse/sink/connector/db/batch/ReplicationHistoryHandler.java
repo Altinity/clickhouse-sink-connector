@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -77,14 +78,11 @@ public class ReplicationHistoryHandler {
         this.queryFormatter = new QueryFormatter();
         this.dbMetadata = dbMetadata;
 
-        String sourceTz = "UTC";
-        if (config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null) {
-            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if (configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTz = configSourceTimeZone;
-            }
-        }
-        this.sourceTimeZone = ZoneId.of(sourceTz);
+        // Spec 07.03 section 3.1.6: an unset database.connectionTimeZone is the default zone, never UTC. An invalid
+        // value throws here (TimeZoneResolver), as it does at validation.
+        this.sourceTimeZone = TimeZoneResolver.effective(TimeZoneResolver.SOURCE_CONNECTION_TIMEZONE,
+                config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()),
+                TimeZoneResolver.Kind.SOURCE).zone();
         this.serverTimeZone = serverTimeZone;
         this.useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
     }
@@ -111,8 +109,11 @@ public class ReplicationHistoryHandler {
      * source timezone to the server timezone (Spec 12.03 section 3.6).
      */
     private String serverDateTime(long epochSeconds) {
-        return DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(epochSeconds * 1000,
-                ClickHouseDataType.DateTime, sourceTimeZone, serverTimeZone);
+        // Epoch-exact (Spec 12.04 section 3.5): the instant is passed to ClickHouse as a
+        // unix timestamp, so no zone is involved. Rendering wall-clock digits in the server
+        // zone lost the second pass of a DST overlap and shifted pre-1970 values.
+        // DateTime (UInt32) cannot hold a negative instant; 0 is its floor.
+        return Long.toString(Math.max(0L, epochSeconds));
     }
 
     /** The open-row sentinel {@code 2100-01-01 00:00:00} (Spec 12.02 section 3.1), rendered like {@link #serverDateTime}. */
@@ -149,6 +150,13 @@ public class ReplicationHistoryHandler {
 
     /** Low 22 bits of a snowflake carry the per-timestamp discriminator ({@code SnowFlakeId.GTID_FIELD_BITS}). */
     private static final long SNOWFLAKE_DISCRIMINATOR_MASK = (1L << SnowFlakeId.GTID_FIELD_BITS) - 1;
+
+    /**
+     * A sequence counter at or above this (10^15 rows in one window) cannot come from
+     * the counter: it is the carry of a row without a GTID lifted above earlier GTID
+     * versions into the snowflake domain (spec 02.01 section 3.1.2).
+     */
+    static final long MERGED_DOMAIN_COUNTER_MIN = 1_000_000_000_000_000L;
 
     /**
      * The seeds of the lightweight sequence counter (spec 02.03; the constants of
@@ -230,7 +238,9 @@ public class ReplicationHistoryHandler {
         long tsMs;
         long discriminator;
         if (record.getGtid() != -1L) {
-            tsMs = record.getVersionTs() > 0 ? record.getVersionTs() : record.getTs_ms();
+            // The same timestamp calculateVersion feeds the snowflake, so that on the
+            // GTID path the history version IS the standard version (spec 02.01 3.5 b).
+            tsMs = record.versionTimestamp();
             discriminator = record.getGtid();
         } else if (record.getSequenceNumber() != -1L) {
             long seq = record.getSequenceNumber();
@@ -249,6 +259,15 @@ public class ReplicationHistoryHandler {
             long seed = counter >= SEQUENCE_START ? SEQUENCE_START
                     : counter >= SEQUENCE_START_INITIAL ? SEQUENCE_START_INITIAL : 0L;
             discriminator = counter - seed;
+            if (counter >= MERGED_DOMAIN_COUNTER_MIN) {
+                // A row without a GTID that the version sequence carried above earlier
+                // GTID (snowflake) versions (spec 02.01 section 3.1.2): its standard
+                // version already lies in the snowflake domain -- above every GTID
+                // version assigned before it, and the sequence raises every later GTID
+                // version to at least it -- so it is its own history version. No real
+                // counter window reaches MERGED_DOMAIN_COUNTER_MIN rows.
+                return seq;
+            }
             if (discriminator < 0 || discriminator > SNOWFLAKE_DISCRIMINATOR_MASK) {
                 throw new IllegalStateException(String.format(
                         "History version for topic '%s' at kafka offset %d cannot be encoded: sequence %d "
@@ -464,6 +483,14 @@ public class ReplicationHistoryHandler {
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
+            // A statement the driver reports as EXECUTE_FAILED did NOT happen
+            // (spec 03.06 FM-03.06-4). This statement IS the record's write --
+            // the SCD2 close row and the after image, or the delete marker --
+            // and the caller marks the record applied the moment this method
+            // returns, so an unchecked answer would acknowledge the offset past
+            // a version that was never written. There is no later
+            // flushStagedRows() for it to be caught by.
+            PreparedStatementExecutor.failOnExecuteFailed(batchResult, null, tableName);
 
             log.debug("Replication history {} executed successfully for table: {}", isDelete ? "delete" : "update", tableName);
             return batchResult.length > 0;

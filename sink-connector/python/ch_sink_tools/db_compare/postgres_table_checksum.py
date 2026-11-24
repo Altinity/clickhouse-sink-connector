@@ -102,7 +102,9 @@ def build_pg_select_expression(col_name, pg_type, is_nullable, udt_name,
     # Timestamps → microsecond-precision UTC string matching CH toString(toTimeZone(col, 'UTC'))
     # timestamptz (with time zone): normalise to UTC first so both sides produce the same string
     # regardless of PG session timezone or CH server timezone.
-    elif 'timestamp' in pg_type_lower and 'time zone' in pg_type_lower:
+    # 'timestamp without time zone' also contains the words 'time zone', so the
+    # type is read for 'with time zone' and the exact 'without' form is excluded.
+    elif 'timestamp' in pg_type_lower and 'with time zone' in pg_type_lower and 'without' not in pg_type_lower:
         expr = f"to_char({q} AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')"
     # timestamp without time zone: no timezone conversion needed
     elif 'timestamp' in pg_type_lower:
@@ -112,8 +114,13 @@ def build_pg_select_expression(col_name, pg_type, is_nullable, udt_name,
     elif pg_type_lower == 'date':
         expr = f"to_char({q}, 'YYYY-MM-DD')"
 
+    # time with time zone: to_char() has no timetz form. Normalised to UTC, then
+    # the zone is dropped, like the timestamptz branch.
+    elif pg_type_lower in ('time with time zone', 'timetz'):
+        expr = f"to_char(({q} AT TIME ZONE 'UTC')::time, 'HH24:MI:SS.US')"
+
     # Time types → HH24:MI:SS.US
-    elif 'time' in pg_type_lower:
+    elif pg_type_lower in ('time', 'time without time zone'):
         expr = f"to_char({q}, 'HH24:MI:SS.US')"
 
     # Bytea → hex string matching CH String from Debezium hex-encoding
@@ -216,7 +223,7 @@ def build_tier1_chunk_query(table_name, pg_schema, columns_meta,
     # WHERE clause assembly
     where_parts = ["1=1"]
     if where:
-        where_parts.append(where)
+        where_parts.append(f"({where})")
     if pk_col and min_pk is not None and max_pk is not None:
         where_parts.append(f'"{pk_col}" BETWEEN {min_pk} AND {max_pk}')
     where_sql = " AND ".join(where_parts)
@@ -250,16 +257,47 @@ FROM (
     return sql
 
 
+INTEGER_PG_TYPES = frozenset({
+    'smallint', 'integer', 'bigint', 'int', 'int2', 'int4', 'int8',
+    'smallserial', 'serial', 'bigserial', 'serial2', 'serial4', 'serial8',
+})
+
+
+def is_integer_pg_type(pg_type):
+    """True for the integer types a PK range can be cut on. The whole type name
+    is compared: a substring test took 'interval' and 'point' for integers
+    because both contain 'int'."""
+    return (pg_type or '').lower().strip() in INTEGER_PG_TYPES
+
+
+def pk_hash_input(pk_columns):
+    """The text the Tier-2 hash is taken over: the key column as text, or for a
+    composite key every key column, in key order, joined by chr(1) -- the
+    ClickHouse side builds the same text with ``concat_ws(char(1), ...)``. Hashing
+    the first column only made two rows that share it indistinguishable."""
+    columns = [pk_columns] if isinstance(pk_columns, str) else list(pk_columns)
+    if not columns:
+        raise ValueError("A Tier-2 checksum needs at least one primary key column")
+    if len(columns) == 1:
+        return f'"{columns[0]}"::text'
+    return "concat_ws(chr(1), " + ", ".join(f'"{column}"::text' for column in columns) + ")"
+
+
 def build_tier2_chunk_query(table_name, pg_schema, pk_col,
                              min_pk, max_pk, where=None,
-                             debug_output=False, debug_limit=None):
+                             debug_output=False, debug_limit=None,
+                             hash_columns=None):
     """
     Build the Tier-2 PK-list MD5 query.
     Detects missing/extra rows by checksumming sorted PK values only.
+
+    ``pk_col`` is the integer key column the range filter is cut on;
+    ``hash_columns`` is every primary key column (default: ``pk_col`` alone),
+    all of which enter the hash (composite keys).
     """
     where_parts = ["1=1"]
     if where:
-        where_parts.append(where)
+        where_parts.append(f"({where})")
     if pk_col and min_pk is not None and max_pk is not None:
         where_parts.append(f'"{pk_col}" BETWEEN {min_pk} AND {max_pk}')
     where_sql = " AND ".join(where_parts)
@@ -268,12 +306,16 @@ def build_tier2_chunk_query(table_name, pg_schema, pk_col,
     if debug_output and debug_limit:
         limit_clause = f" LIMIT {debug_limit}"
 
+    hash_columns = list(hash_columns) if hash_columns else [pk_col]
+    hash_text = pk_hash_input(hash_columns)
+    order_by = ", ".join(f'"{column}"' for column in hash_columns)
+
     if debug_output:
         sql = f"""
-SELECT md5("{pk_col}"::text) AS pk_hash
+SELECT md5({hash_text}) AS pk_hash
 FROM "{pg_schema}"."{table_name}"
 WHERE {where_sql}
-ORDER BY "{pk_col}"{limit_clause}
+ORDER BY {order_by}{limit_clause}
 """.strip()
     else:
         sql = f"""
@@ -284,10 +326,10 @@ SELECT
     sum(('x' || substring(pk_hash, 17, 8))::bit(32)::int8) AS c,
     sum(('x' || substring(pk_hash, 25, 8))::bit(32)::int8) AS d
 FROM (
-    SELECT md5("{pk_col}"::text) AS pk_hash
+    SELECT md5({hash_text}) AS pk_hash
     FROM "{pg_schema}"."{table_name}"
     WHERE {where_sql}
-    ORDER BY "{pk_col}"{limit_clause}
+    ORDER BY {order_by}{limit_clause}
 ) t
 """.strip()
 
@@ -302,8 +344,12 @@ def divide_table_into_chunks(conn, table_name, pg_schema, pk_col, chunk_size, wh
     """
     Return a list of (min_pk, max_pk) chunk tuples based on the PK range.
     If no PK or chunk_size=0, returns a single chunk with (None, None).
+    A negative chunk_size raises ValueError: it used to step the lower bound
+    backwards and never reach the end of the key range.
     """
-    if not pk_col:
+    if chunk_size is not None and chunk_size < 0:
+        raise ValueError(f"--chunk_size must be 0 (one chunk) or a positive number of keys, got {chunk_size}")
+    if not pk_col or not chunk_size:
         return [{'min_pk': None, 'max_pk': None}]
 
     where_clause = ""
@@ -451,7 +497,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
             for col in columns_meta:
                 if col['column_name'] == pkc:
                     pg_type = col['pg_type'].lower()
-                    if any(t in pg_type for t in ('int', 'serial', 'bigint', 'smallint')):
+                    if is_integer_pg_type(pg_type):
                         pk_col = pkc
                     break
             if pk_col:
@@ -502,6 +548,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
                     where=where,
                     debug_output=debug_output,
                     debug_limit=debug_limit,
+                    hash_columns=pk_columns,
                 )
 
             if sql is None:
@@ -546,6 +593,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
                         where=where,
                         debug_output=debug_output,
                         debug_limit=debug_limit,
+                        hash_columns=pk_columns,
                     )
 
                 if sql is None:

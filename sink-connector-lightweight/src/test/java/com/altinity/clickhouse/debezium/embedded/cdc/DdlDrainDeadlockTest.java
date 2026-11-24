@@ -385,6 +385,10 @@ public class DdlDrainDeadlockTest {
      * Clears the handoff FIFO's static bookkeeping so a registration left by an
      * earlier test in this JVM cannot make the drain wait on a ghost unit.
      * Mirrors the sink-connector test helper {@code OffsetTestSupport.resetFifo()}.
+     *
+     * <p>The abandonment latch is cleared too: it outlives a bare {@code reset()}
+     * by design (spec 09.01 §3.6), so a test that armed it must clear it
+     * explicitly rather than leak it into the next test in this JVM.</p>
      */
     private static void resetOffsetFifo() throws Exception {
         for (String name : new String[] {"outstandingSequences", "groupToUnit", "completedUnits"}) {
@@ -396,6 +400,45 @@ public class DdlDrainDeadlockTest {
             } else if (collection instanceof java.util.Collection) {
                 ((java.util.Collection<?>) collection).clear();
             }
+        }
+        clearAbandonmentLatch();
+    }
+
+    /** Clears the latch by reflection: its test hook is package-private in another package. */
+    private static void clearAbandonmentLatch() throws Exception {
+        Field armed = DebeziumOffsetManagement.class.getDeclaredField("unprovenAbandonment");
+        armed.setAccessible(true);
+        armed.set(null, false);
+        Field below = DebeziumOffsetManagement.class
+                .getDeclaredField("unprovenAbandonmentBelowSequence");
+        below.setAccessible(true);
+        below.set(null, Long.MAX_VALUE);
+    }
+
+    /**
+     * Arms the latch the way production does: hand off a unit, then {@code reset()}
+     * abandons it. The FIFO is left EMPTY, exactly as after a real abandonment.
+     */
+    private static void armTheLatchByAbandoningAUnit() throws Exception {
+        resetOffsetFifo();
+        List<ClickHouseStruct> unit = java.util.Collections.singletonList(new ClickHouseStruct());
+        DebeziumOffsetManagement.registerHandoff(unit, java.util.Collections.singletonList(unit));
+        assertEquals(1, DebeziumOffsetManagement.reset(), "sanity: reset() abandons the unit");
+        assertTrue(DebeziumOffsetManagement.hasUnprovenAbandonment(), "sanity: the latch is armed");
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(), "sanity: the FIFO is empty");
+    }
+
+    private static Object invokeDrainBeforeStop(DebeziumChangeEventCapture capture) throws Exception {
+        Method drain = DebeziumChangeEventCapture.class.getDeclaredMethod("drainBeforeStop");
+        drain.setAccessible(true);
+        try {
+            return drain.invoke(capture);
+        } catch (InvocationTargetException ite) {
+            Throwable cause = ite.getCause();
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            }
+            throw ite;
         }
     }
 
@@ -561,6 +604,100 @@ public class DdlDrainDeadlockTest {
                 resetOffsetFifo();
             }
             executor.resume();
+            executor.shutdownNow();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The abandonment latch (spec 09.01 section 3.6, spec 09.04
+    // FM-09.04-4): an abandoned FIFO is EMPTY to every drain. Folding the
+    // latch into isPipelineQuiescent() made these drains wait on work that
+    // cannot exist -- the latch is released by a write, which only the
+    // writers can produce, and they are exactly what the drain is waiting
+    // for.
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code latch_never_blocks_drain} (specs/lean/AbandonLatch.lean) in Java:
+     * with the latch armed and the FIFO empty, {@code drainBeforeDDL()} returns
+     * at once. A latch inside {@code isPipelineQuiescent()} makes this spin
+     * until a live worker is declared dead mid-drain, and the DDL aborts with
+     * "DDL drain" -- for an abandonment the restart exists to recover from.
+     */
+    @Test
+    @DisplayName("An armed abandonment latch does not make drainBeforeDDL wait: an abandoned FIFO is empty to the drain")
+    public void testArmedLatchDoesNotBlockTheDdlDrain() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+        Throwable[] outcome = new Throwable[1];
+
+        try {
+            armTheLatchByAbandoningAUnit();
+            wireHashRouting(capture, executor, 2);
+            // A LIVE pool: nothing is queued, so the drain has nothing to wait
+            // for. A latch term would still spin here (the latch cannot be
+            // released by any writer), and the liveness check would never fire
+            // because the worker is alive -- the drain would never return.
+            capture.workerFutures.add(executor.scheduleAtFixedRate(() -> { }, 0, 10,
+                    TimeUnit.MILLISECONDS));
+
+            long started = System.currentTimeMillis();
+            Thread drainer = new Thread(() -> {
+                try {
+                    invokeDrain(capture);
+                } catch (Throwable t) {
+                    outcome[0] = t;
+                }
+            }, "ddl-drain-armed-latch-test");
+            drainer.setDaemon(true);
+            drainer.start();
+            drainer.join(10_000);
+            long elapsed = System.currentTimeMillis() - started;
+
+            assertFalse(drainer.isAlive(),
+                    "drainBeforeDDL() was still waiting after " + elapsed + " ms with an armed latch "
+                            + "and nothing in flight; an abandonment is not live work, and waiting on "
+                            + "it aborts every DDL until some unrelated write happens to clear it "
+                            + "(spec 09.01 section 3.6)");
+            assertEquals(null, outcome[0], "the drain must return normally: " + outcome[0]);
+            assertTrue(isPaused(executor), "the drain still paused the pool before the DDL");
+            assertTrue(DebeziumOffsetManagement.hasUnprovenAbandonment(),
+                    "and it did NOT clear the latch: only an acknowledged post-reset unit can");
+        } finally {
+            resetOffsetFifo();
+            executor.resume();
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * The same property for the stop-drain: {@code drainBeforeStop()} must not
+     * burn its whole {@code stopDrainTimeoutMs} on a latch the writers it is
+     * waiting for cannot release.
+     */
+    @Test
+    @DisplayName("An armed abandonment latch does not make drainBeforeStop burn its drain timeout")
+    public void testArmedLatchDoesNotBlockTheStopDrain() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+        long savedTimeout = DebeziumChangeEventCapture.stopDrainTimeoutMs;
+        DebeziumChangeEventCapture.stopDrainTimeoutMs = 5_000;
+
+        try {
+            armTheLatchByAbandoningAUnit();
+            setField(capture, "executor", executor);
+
+            long started = System.currentTimeMillis();
+            invokeDrainBeforeStop(capture);
+            long elapsed = System.currentTimeMillis() - started;
+
+            assertTrue(elapsed < 1_000,
+                    "drainBeforeStop() took " + elapsed + " ms of its 5000 ms budget with an armed "
+                            + "latch and nothing in flight; every stop would stall the full timeout "
+                            + "after an abandonment");
+        } finally {
+            DebeziumChangeEventCapture.stopDrainTimeoutMs = savedTimeout;
+            resetOffsetFifo();
             executor.shutdownNow();
         }
     }

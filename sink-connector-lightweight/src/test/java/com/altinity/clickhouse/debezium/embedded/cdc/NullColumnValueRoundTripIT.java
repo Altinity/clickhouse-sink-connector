@@ -110,9 +110,8 @@ public class NullColumnValueRoundTripIT {
 
     @AfterEach
     public void stopContainers() throws Exception {
-        if (application != null && application.getDebeziumEventCapture() != null
-                && application.getDebeziumEventCapture().engine != null) {
-            application.getDebeziumEventCapture().engine.close();
+        if (application != null && application.getDebeziumEventCapture() != null) {
+            application.getDebeziumEventCapture().stop();
         }
         if (executorService != null) {
             executorService.shutdown();

@@ -37,6 +37,8 @@ def init_sink_connector(
             "clickhouse.server.password": "root",
             "clickhouse.server.database": "test",
             "clickhouse.server.port": 8123,
+            "database.connectionTimeZone": "UTC",
+            "clickhouse.datetime.timezone": "UTC",
             "clickhouse.table.name": "users",
             "key.converter": "io.confluent.connect.avro.AvroConverter",
             "value.converter": "io.confluent.connect.avro.AvroConverter",

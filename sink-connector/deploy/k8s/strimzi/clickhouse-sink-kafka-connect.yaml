@@ -11,3 +11,5 @@ spec:
     database.history.kafka.bootstrap.servers: "my-cluster-kafka-bootstrap:9092"
     database.history.kafka.topic: "schema-changes.inventory"
     include.schema.changes: "true"
+    database.connectionTimeZone: "UTC"
+    clickhouse.datetime.timezone: "UTC"

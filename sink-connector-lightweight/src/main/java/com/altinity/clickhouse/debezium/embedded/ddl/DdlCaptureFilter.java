@@ -82,6 +82,31 @@ public final class DdlCaptureFilter {
                 props.getProperty(TABLE_EXCLUDE_LIST));
     }
 
+    /**
+     * Decides whether a {@code RENAME TABLE src TO dst} pair should be kept when
+     * {@code src} is NOT captured but {@code dst} IS captured.
+     *
+     * <p>A pair is kept when an explicit include filter pulls {@code dst} into
+     * the captured set (for example {@code table.include.list=db1\.orders} with
+     * {@code RENAME TABLE tmp TO orders}, or {@code database.include.list=prod}
+     * with {@code RENAME TABLE staging.t TO prod.t}). When no include rule pulls
+     * {@code dst} in — e.g. pure {@code table.exclude.list=db1\.orders} with
+     * {@code RENAME TABLE orders TO orders_old} — {@code src} was explicitly
+     * excluded and never existed in ClickHouse, so the pair is dropped.</p>
+     */
+    public static boolean isRenameTargetPulledIntoInclude(String sourceDatabase, Properties props) {
+        String tableInclude = props.getProperty(TABLE_INCLUDE_LIST);
+        if (tableInclude != null && !tableInclude.trim().isEmpty()) {
+            return true;
+        }
+        String dbInclude = props.getProperty(DATABASE_INCLUDE_LIST);
+        if (dbInclude != null && !dbInclude.trim().isEmpty()
+                && sourceDatabase != null && !sourceDatabase.isEmpty()) {
+            return !passes(sourceDatabase, dbInclude, props.getProperty(DATABASE_EXCLUDE_LIST));
+        }
+        return false;
+    }
+
     private static boolean passes(String identifier, String includeCsv, String excludeCsv) {
         List<Pattern> includes = compile(includeCsv);
         if (!includes.isEmpty() || (includeCsv != null && !includeCsv.trim().isEmpty())) {

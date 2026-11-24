@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.antlr.v4.runtime.CharStreams;
@@ -424,6 +425,17 @@ public class PostgreSQLDDLParserService implements DDLParserService {
                 }
             }
         }
-        return mapPostgresTypeToClickHouse(pgType);
+        String mapped = mapPostgresTypeToClickHouse(pgType);
+        // Spec 07.03 section 3.1.6 and 3.1.13: a zone-less TIMESTAMP is named with the configured zone, as the
+        // MySQL DDL path names DATETIME. Without a name ClickHouse displays the stored instant in the server zone,
+        // not in the zone the converter wrote the wall clock in. An unset value is refused (spec 07.03 section 3.1.2).
+        String upper = pgType == null ? "" : pgType.trim().toUpperCase();
+        if (upper.startsWith("TIMESTAMP") && !upper.contains("WITH TIME ZONE")
+                && mapped.startsWith("DateTime64(") && !mapped.contains(",")) {
+            String raw = config == null ? null : config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE);
+            String scale = mapped.substring("DateTime64(".length(), mapped.length() - 1);
+            return "DateTime64(" + scale + ", '" + TimeZoneResolver.clickHouseZone(raw).getId() + "')";
+        }
+        return mapped;
     }
 }

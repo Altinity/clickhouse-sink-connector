@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -116,7 +117,7 @@ public class VersionFallbackWithoutGtidTest {
         method.setAccessible(true);
         try {
             method.invoke(mapper(), columnNameToIndexMap, ps, record,
-                    new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                    new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                     columnNameToDataTypeMap,
                     DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         } catch (InvocationTargetException e) {

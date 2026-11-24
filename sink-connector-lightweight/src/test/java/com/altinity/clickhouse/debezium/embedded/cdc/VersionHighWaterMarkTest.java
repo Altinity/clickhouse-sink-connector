@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -333,7 +334,7 @@ public class VersionHighWaterMarkTest {
         Map<String, String> configMap = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(configMap);
         configMap.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "db1:target_db1");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(configMap));
 
         assertEquals(Arrays.asList("target_db1", "db2"), VersionHighWaterMark.targetDatabases(props, config));
 

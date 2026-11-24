@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -77,7 +78,7 @@ public class DbWriterPartialInitCacheTest {
         props.put("connection.pool.disable", "true");
         // No 5 s x n sleeps in BaseDbWriter.createDestinationDatabase.
         props.put("errors.max.retries", "0");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseStruct record() {
@@ -89,7 +90,7 @@ public class DbWriterPartialInitCacheTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-08.01-5: a DbWriter whose constructor failed part-way is cached and served until a DDL "
+    @Disabled("Not yet covered: a DbWriter whose constructor failed part-way is cached and served until a DDL "
             + "bumps the table version; auto-create, engine-column resolution and the ReplacingMergeTree guard are "
             + "never retried, so a transient failure during the first build stalls the table (or writes it with "
             + "unresolved engine columns) until the process restarts")

@@ -86,7 +86,7 @@ def snapshot_load(ws, mysql_snapshot):
     argv = loader + ["--clickhouse_host", CH_HOST, "--clickhouse_config_file", "clickhouse-client.xml",
                      "--clickhouse_database", SNAPSHOT_DB, "--mysql_source_database", DB,
                      "--dump_dir", mysql_snapshot.dump_dir, "--threads", "4", "--mysqlshell", "--rmt_delete_support",
-                     "--clickhouse_datetime_timezone", SOURCE_TIMEZONE]
+                     "--clickhouse_datetime_timezone", SOURCE_TIMEZONE, "--source_timezone", SOURCE_TIMEZONE]
     if ws.supports("--binary_handling_mode", *loader):
         argv += ["--binary_handling_mode", BINARY_ENCODING]
     return ws.py(*argv)

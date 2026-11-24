@@ -34,6 +34,17 @@ Both engines must share identical logic for:
 4. Two-phase primary key relocation tombstoning.
 5. `DebeziumOffsetManagement` batch registration and commitment.
 
+### 3.3 Inline Failure Is Not Success
+A normal return from `ClickHouseBatchWriter.persistRecords` means the caller may
+continue to the next row group or synchronous DDL. Any interrupted persistence
+or acknowledgement must instead throw `BatchPersistenceException`, preserve its
+cause chain and restore the thread's interrupt flag. The caller must not continue
+past an unsuccessful batch merely because cancellation was requested. In
+particular, a pre-DDL inline write has no outstanding asynchronous handoff for
+the DDL drain to detect; returning normally would let a later DDL or durable row
+acknowledge an offset beyond the unwritten records. Cancellation may cause replay
+of already written rows, but must never masquerade as successful persistence.
+
 ---
 
 ## 4. Invariants Preserved
@@ -44,6 +55,8 @@ Both engines must share identical logic for:
 ## 5. Verification Criteria
 - `ClickHouseBatchWriterDatabaseResolutionTest` — destination resolution in the single-threaded writer (item 1).
 - `ClickHouseBatchWriterMissingTableTest` — the single-threaded writer fails loudly on a missing target table.
+- `MissingTargetTableEngineTest.interruptedInsertStopsBeforeLaterAcknowledgement` — a JDBC `executeBatch` interrupted before durability fails the inline caller, preserves the cause and flag, and prevents a later durable row from acknowledging a higher offset.
+- `MissingTargetTableEngineTest.interruptedAcknowledgementFailsTheCaller` — a real committer `InterruptedException` propagates and stops acknowledgement of the remaining rows.
 - `ClickHouseBatchRunnableTest`, `HashRoutingPerTableOrderingTest`, `RoutedBatchTest` — the multi-threaded runnable and its routing.
 - Verification: a side-by-side equivalence suite asserting identical table contents from both engines is not yet covered by an automated test (gap).
 
@@ -55,7 +68,7 @@ Both engines recover the same way in the end — nothing is acknowledged past an
 
 - **FM-03.02-1 A transient ClickHouse error stops the engine in single-threaded mode (parity break)**
   - **Trigger**: `single.threaded=true` and any insert failure — connection refused during a ClickHouse restart, 252 TOO_MANY_PARTS, 241 MEMORY_LIMIT_EXCEEDED, a broken keep-alive socket.
-  - **Behaviour**: `ClickHouseBatchWriter.persistRecords` wraps every exception except an interrupt in `BatchPersistenceException` and throws it out of the `ChangeConsumer`; `DebeziumChangeEventCapture.handleEngineCompletion` classifies it (not FATAL), sleeps `SLEEP_TIME` (10 s) and recreates the engine, which redelivers from the committed offset; `errors.max.retries` (10) failures without an acknowledged offset in between make it terminal (exit code 3). The multi-threaded pool retries the same condition inside the worker without stopping (FM-03.03-1). The parity list of §3.2 covers what is written, not how a failure is retried.
+  - **Behaviour**: `ClickHouseBatchWriter.persistRecords` propagates persistence and acknowledgement exceptions as `BatchPersistenceException` (including interruption, with the flag preserved) and throws it out of the `ChangeConsumer`; `DebeziumChangeEventCapture.handleEngineCompletion` classifies it (not FATAL), sleeps `SLEEP_TIME` (10 s) and recreates the engine, which redelivers from the committed offset; `errors.max.retries` (10) failures without an acknowledged offset in between make it terminal (exit code 3). The multi-threaded pool retries the same condition inside the worker without stopping (FM-03.03-1). The parity list of §3.2 covers what is written, not how a failure is retried.
   - **Detection**: ERROR `Error persisting records to ClickHouse`, ERROR `Engine stopped with an error: ...`, ERROR `Restarting the engine - retry <n> of <max>`; when spent, FATAL `Replication is STOPPED: ...` and exit code 3. Immediate.
   - **Blast radius**: replication stops for the outage; no loss; every engine restart re-reads the schema history and reopens the binlog dump.
   - **Recovery**: self-heals on the first engine retry after ClickHouse answers again; after a terminal exit the supervisor restart (`RestartSec=30`) resumes.

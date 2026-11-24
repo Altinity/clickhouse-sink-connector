@@ -20,11 +20,13 @@ from ch_sink_tools.db.mysql import (
     execute_mysql, is_binary_datatype, get_tables_from_regex,
     get_mysql_connection, mysql_pk_columns, get_table_partition_key,
     divide_table_into_even_chunks, resolve_credentials_from_config,
+    quote_identifier, sql_literal,
 )
+from ch_sink_tools.db_compare._sql_text import substitute_partition_expression
 from ch_sink_tools.db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
-                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, saturation_floor, warn_not_compared,
-                                parse_exclude_columns)
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_date_flag, clamped_count_expression,
+                                validate_timezone, resolve_source_zone, check_source_timezone_flag, shift_datetime_bounds, saturation_floor,
+                                warn_not_compared, parse_exclude_columns, mysql_escape_piece_sql, mysql_decimal_text)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -80,7 +82,7 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
     ``bounds`` are the canonical (min, max) datetime clamp bounds and
     ``saturate_from`` the start of the saturated last day (``saturation_floor()``).
     """
-    column_name = '`' + column['column_name'] + '`'
+    column_name = quote_identifier(column['column_name'])
     data_type = column['data_type'].lower()
     collation = column['collation']
     min_date_value = options.min_date_value
@@ -103,6 +105,9 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
     if data_type == 'date':  # Date are converted to Date32 in CH
         # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
         return f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS date) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS date) else {column_name} end end"
+    if data_type == 'decimal':
+        # Trailing zeros dropped, so the same value at a different declared scale compares equal (spec 11.02 section 3.3).
+        return mysql_decimal_text(column_name)
     if data_type == 'bit' and column['column_type'].lower() == 'bit(1)':
         # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
         # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
@@ -116,7 +121,11 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         return "lower(hex(cast(" + column_name + " as binary)))"
     if is_binary_datatype(data_type):
         if binary_encoding == 'base64':
-            return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"
+            # to_base64 breaks its output into lines with a newline every 76
+            # characters. The newline is named by code point, not by the '\n'
+            # escape: under the NO_BACKSLASH_ESCAPES sql_mode that literal would be
+            # a backslash and an n, and nothing would be removed.
+            return "replace(to_base64(cast(" + column_name + " as binary)),char(10 using ascii),'')"
         return "lower(hex(cast(" + column_name + " as binary)))"
     if same_charset or collation is None:
         return column_name
@@ -153,10 +162,12 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     utc_floor = saturation_floor(utc_bounds, 'UTC')
     wall_clock_floor = saturation_floor(utc_bounds, options.source_timezone)
     collations = [column['collation'] for column in columns if column['collation'] is not None]
-    same_charset = len(collations) <= 1
+    # Distinct collations, not columns: any number of text columns sharing one
+    # collation is "same", and no text column at all is too.
+    same_charset = len(set(collations)) <= 1
     for column in columns:
         name = column['column_name']
-        column_name = '`' + name + '`'
+        column_name = quote_identifier(name)
         data_type = column['data_type'].lower()
         if name in excluded_columns:
             logging.info("Excluding column " + name)
@@ -173,10 +184,12 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
         if data_type in ('datetime', 'timestamp'):
             clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1],
                                                        floor))
+        elif data_type == 'date':
+            clamped_flags.append(clamped_date_flag(column_name, options.min_date_value, options.max_date_value))
         if column['is_nullable'] == 'YES':
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"
-        pieces.append(expression)
+        pieces.append(mysql_escape_piece_sql(expression))
         compared.append(column_name)
         data_types[name] = column['column_type']
     logging.debug(str(nullables))
@@ -187,8 +200,8 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
 
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
 
-    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, COLUMN_TYPE as column_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation, DATETIME_PRECISION as datetime_precision from information_schema.columns where table_schema='" +
-                                       args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, COLUMN_TYPE as column_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation, DATETIME_PRECISION as datetime_precision from information_schema.columns where table_schema=" +
+                                       sql_literal(args.mysql_database)+" and table_name = "+sql_literal(table)+" order by ordinal_position")
 
     logging.debug("Excluded columns: "+str(excluded_columns))
     row_list = [row for row in rowset.mappings()]
@@ -196,23 +209,22 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
     # A standalone run is told to pass the JSON columns to the ClickHouse side (spec 13.06 D-13.06-41).
     warn_not_compared(args.mysql_database, table, skipped, warned_tables, json_hint=True)
+    if not select:
+        # Every column excluded or skipped by type (or the table is not visible to
+        # this user): concat_ws('#',) is not valid SQL, and a checksum of nothing
+        # must not be reported as a match (spec 11.02 section 3.3).
+        raise ValueError(f"No comparable column in {args.mysql_database}.{table}: every column is excluded "
+                         "or skipped by type, or the table does not exist; no checksum computed")
     # order is not important
-    primary_key_columns = []
-    logging.debug(str(primary_key_columns))
     order_by_columns = ""
-    if len(primary_key_columns) > 0:
-        order_by_columns = ','.join(primary_key_columns)
 
-    query = "select "+select+"  as query from `"+args.mysql_database+"`.`"+table+"`"
+    query = "select "+select+"  as query from "+quote_identifier(args.mysql_database)+"."+quote_identifier(table)
     if where :
         query += " where "+where
 
-    if len(primary_key_columns) > 0:
-        query += " order by " + order_by_columns
-
+    # The key columns were only ever needed for the ORDER BY of the (never used)
+    # external-table form; the empty string is kept for the callers' tuple shape.
     external_column_types = ""
-    for column in primary_key_columns:
-        external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
     return (query, select, order_by_columns, external_column_types, clamped_expression)
@@ -231,50 +243,55 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     # (spec 11.02 section 3.4); DATETIME is unaffected by the session zone.
     statements = ['set names utf8mb4', 'set session wait_timeout=28000', "set time_zone = '+00:00'"]
     # todo make sure the fifo is there
-    external_table_name = args.mysql_database+"."+table
     limit = ""
     if args.debug_limit:
-        limit = " limit "+args.debug_limit
+        # int(): the value is interpolated into the statement.
+        limit = " limit " + str(int(args.debug_limit))
     where = "1=1"
     if _where:
         where = _where
+    source_table = quote_identifier(args.mysql_database) + "." + quote_identifier(table)
 
-    statements.append(
-        """set @md5sum := "", @a := cast(0 as signed), @b:= cast(0 as signed), @c:= cast(0 as signed), @d:=cast(0 as signed)""")
-
+    # The aggregate is a plain SUM over per-row values computed in a derived
+    # table. It does not assign session variables in the SELECT list (their
+    # evaluation order is unspecified and the feature is deprecated, MySQL 8.0
+    # reference manual, "User-Defined Variables"), and SUM() of an UNSIGNED
+    # operand is DECIMAL(65,0): it cannot overflow, where the former signed
+    # BIGINT running totals failed at about 2.1 billion rows. NO_MERGE keeps the
+    # md5 computed once per row instead of once per selected word (spec 11.02
+    # section 3.5).
     sql = """
-         select
+         select /*+ NO_MERGE(t) */
            count(*) as "cnt",
-           coalesce(max(a),0) as a,
-           coalesce(max(b),0) as b,
-	   coalesce(max(c),0) as c,
-	   coalesce(max(d),0) as d,
+           coalesce(sum(cast(conv(substring(`hash`, 1, 8), 16, 10) as unsigned)),0) as a,
+           coalesce(sum(cast(conv(substring(`hash`, 9, 8), 16, 10) as unsigned)),0) as b,
+           coalesce(sum(cast(conv(substring(`hash`, 17, 8), 16, 10) as unsigned)),0) as c,
+           coalesce(sum(cast(conv(substring(`hash`, 25, 8), 16, 10) as unsigned)),0) as d,
            coalesce(sum(clamped),0) as clamped
          from (
-          select @md5sum :=md5( convert(concat_ws('#',{select_query}) using utf8mb4  )) as `hash`,
-		   @a:=@a+cast(conv(substring(@md5sum, 1, 8), -16, 10) as signed) as a,
-                   @b:=@b+cast(conv(substring(@md5sum, 9, 8), -16, 10) as signed) as b,
-		   @c:=@c+cast(conv(substring(@md5sum, 17, 8), -16, 10) as signed) as c,
-		   @d:=@d+cast(conv(substring(@md5sum, 25, 8), -16, 10) as signed) as d,
+          select md5( convert(concat_ws('#',{select_query}) using utf8mb4  )) as `hash`,
                    {clamped_expression} as clamped
-           from {schema}.{table} where {where}
+           from {source_table} where {where}
          ) as t;
-  """.format(select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit, clamped_expression=clamped_expression)
+  """.format(select_query=select_query, source_table=source_table, where=where, clamped_expression=clamped_expression)
 
     statements.append(sql)
     if args.debug_output:
         # The per-row strings, written to out.<table>.mysql.txt by
         # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
-        statements.append("""select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
-            select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit))
+        statements.append("""select concat_ws('#',{select_query})  as `hash`   from {source_table} where  {where}  {limit}""".format(
+            select_query=select_query, source_table=source_table, where=where, limit=limit))
     return statements
 
 
 def binary_log_status_statement(version):
     """SHOW BINARY LOG STATUS from MySQL 8.2 (8.4 removed SHOW MASTER STATUS),
-    SHOW MASTER STATUS before. Chosen from @@version, never by trying: a
+    SHOW MASTER STATUS before or on MariaDB. Chosen from @@version, never by trying: a
     failed statement inside the snapshot transaction is avoided."""
-    match = re.match(r"(\d+)\.(\d+)", str(version))
+    text = str(version or "")
+    if "mariadb" in text.lower():
+        return "SHOW MASTER STATUS"
+    match = re.match(r"(\d+)\.(\d+)", text)
     if match and (int(match.group(1)), int(match.group(2))) >= (8, 2):
         return "SHOW BINARY LOG STATUS"
     return "SHOW MASTER STATUS"
@@ -385,11 +402,11 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
     _where = "1=1"
     if where:
-        _where += " and "+ where
+        _where += f" and ({where})"
     if pk:
         min_pk = int(chunk['min_pk'])
         max_pk = int(chunk['max_pk'])
-        _where = f" {_where} and {pk} between {min_pk} and {max_pk}"
+        _where = f" {_where} and {quote_identifier(pk)} between {min_pk} and {max_pk}"
 
     # space-separated words and comma-separated lists alike (spec 13.06 D-13.06-17)
     parsed_excluded_columns = parse_exclude_columns(excluded_columns)
@@ -397,16 +414,13 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
     return result
 
 
-def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns, include_floating_point_columns, include_json_columns):
-    if args.ignore_tables_regex:
-        rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
-        if rex_ignore_tables.match(mysql_table):
-            logging.info("Ignoring "+mysql_table +
-                         " due to ignore_regex_tables")
-            return
-    statements = []
+def collect_chunk_results(conn, mysql_table, mysql_user, mysql_password, excluded_columns,
+                          include_floating_point_columns, include_json_columns):
+    """The aggregate row of every PK chunk of ``mysql_table``, one list per chunk.
 
-    conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
+    ``conn`` serves the metadata and the chunk boundaries only. A table is split
+    into chunks only with --threads_per_table > 1 and an integer primary key;
+    otherwise it is one chunk and ``--where`` is applied as is."""
     pk = mysql_pk_columns(conn, args.mysql_database, mysql_table, is_integer=True)
     threads_per_table = 1
     if len(pk) > 0 and args.threads_per_table > 1 :
@@ -420,8 +434,8 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
         where = args.where
         if "{partition_expression}" in where:
             partition_key = get_table_partition_key(conn, args.mysql_database, mysql_table)
-            if partition_key is not None:
-                where = fstr(where, partition_key)
+            # raises for a table with no partition expression: never invalid SQL
+            where = substitute_partition_expression(where, partition_key, f"{args.mysql_database}.{mysql_table}")
     result = []
 
     # initialize debug output
@@ -441,19 +455,41 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
                 except Exception:
                     logging.error(f"Checksum failed for {mysql_table}")
                     raise
+    return result
+
+
+def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns, include_floating_point_columns, include_json_columns):
+    if args.ignore_tables_regex:
+        rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
+        if rex_ignore_tables.match(mysql_table):
+            logging.info("Ignoring "+mysql_table +
+                         " due to ignore_regex_tables")
+            return
+    statements = []
+
+    # This connection only serves the metadata queries and the chunk boundaries;
+    # every chunk opens its own. It is closed on every path, including an error.
+    conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
+    try:
+        result = collect_chunk_results(conn, mysql_table, mysql_user, mysql_password, excluded_columns,
+                                       include_floating_point_columns, include_json_columns)
+    finally:
+        conn.close()
     # With --debug_output the per-row strings are in out.<table>.mysql.txt and
     # the checksum line is still printed (spec 13.06 D-13.06-27).
     logging.debug(str(result))
-    # cnt, a, b, c, d and the clamped count, summed over the chunks
+    # cnt, a, b, c, d and the clamped count, summed over the chunks. The driver
+    # returns the SUM() words as Decimal; int keeps the printed digits exact.
     totals = [0, 0, 0, 0, 0, 0]
     for r in result:
         for position, value in enumerate(r):
-            totals[position] += value
+            totals[position] += int(value)
     (cnt, a, b, c, d, clamped) = totals
     checksum = checksum_from_aggregate(cnt, a, b, c, d)
     if clamped > 0:
         (min_datetime_value, max_datetime_value) = datetime_bounds(args)
-        logging.warning(f"{clamped} out-of-range datetime values clamped to [{min_datetime_value}, {max_datetime_value}] in table {args.mysql_database}.{mysql_table}")
+        logging.warning(f"{clamped} out-of-range date/datetime values clamped (datetime to [{min_datetime_value}, {max_datetime_value}], "
+                        f"date to [{args.min_date_value}, {args.max_date_value}]) in table {args.mysql_database}.{mysql_table}")
     logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+checksum + " count "+str(cnt))
 
 # hack to add the user to the logger, which needs it apparently
@@ -495,14 +531,14 @@ def build_argument_parser():
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
     parser.add_argument(
-        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
-        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
+        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='base64', required=False,
+        help='how the connector wrote binary values: base64 text (the connector default), hex text (binary.handling.mode=bytes or hex) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
     parser.add_argument(
         '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
-            '--source_timezone', help='IANA time zone the connector interprets DATETIME values in (its database.connectionTimeZone); only used to clamp DATETIME columns with the same bounds as the ClickHouse side', default='UTC', required=False)
+            '--source_timezone', help='IANA region name the connector interprets DATETIME values in (its database.connectionTimeZone), for example America/Chicago; only used to clamp DATETIME columns with the same bounds as the ClickHouse side. REQUIRED: no default and no server query; pass UTC explicitly when the connector used UTC', default=None, required=False)
     parser.add_argument(
             '--min_datetime_value', help='Lower clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
     parser.add_argument(
@@ -531,14 +567,9 @@ def main():
     parser = build_argument_parser()
     global args
     args = parser.parse_args()
-    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
-    validate_timezone(args.source_timezone, '--source_timezone')
-    if args.consistent_snapshot and args.threads_per_table > 1:
-        # PK chunks run on separate connections, each with its own read view.
-        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
-    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
-        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
+    # The handler goes first: the first logging call made with no handler on the root logger
+    # installs a second, stderr one, and every later line is then printed twice.
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
@@ -553,6 +584,16 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    check_source_timezone_flag(parser, args.source_timezone)
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
+    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
+    if args.consistent_snapshot and args.threads_per_table > 1:
+        # PK chunks run on separate connections, each with its own read view.
+        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
+    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
+        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
     mysql_user = args.mysql_user
     mysql_password = args.mysql_password
@@ -575,6 +616,8 @@ def main():
             # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
             # itself, not a result set (spec 13.06 D-13.06-26).
             table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
+            # the table list is read; each table opens its own connections
+            conn.close()
             for table in table_rows:
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)

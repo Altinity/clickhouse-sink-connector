@@ -1,17 +1,23 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.clickhouse.data.ClickHouseDataType;
+import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.DateTimeException;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Spec 07.03 sections 3.1.2 and 3.1.3: how the source zone and the column
@@ -23,6 +29,7 @@ public class ClickHouseDataTypeMapperTimeZoneTest {
 
     private static ClickHouseSinkConnectorConfig config(String sourceZone) {
         Map<String, String> props = new HashMap<>();
+        props.put("clickhouse.datetime.timezone", "UTC");
         if (sourceZone != null) {
             props.put("database.connectionTimeZone", sourceZone);
         }
@@ -30,26 +37,28 @@ public class ClickHouseDataTypeMapperTimeZoneTest {
     }
 
     @Test
-    @DisplayName("An empty database.connectionTimeZone resolves to the session zone, not UTC")
-    public void emptySourceZoneIsTheSessionZone() {
-        assertEquals(CHICAGO, ClickHouseDataTypeMapper.resolveSourceTimeZone(config(null), CHICAGO),
-                "with no declared source zone there is no basis for a shift: the digits MySQL holds are stored");
-        assertEquals(CHICAGO, ClickHouseDataTypeMapper.resolveSourceTimeZone(config(""), CHICAGO));
+    @DisplayName("An unset database.connectionTimeZone is refused when the config is built; there is no session-zone default")
+    public void unsetSourceZoneIsRefused() {
+        for (String unset : new String[]{null, "", "   "}) {
+            ConfigException refused = assertThrows(ConfigException.class, () -> config(unset));
+            assertTrue(refused.getMessage().contains("database.connectionTimeZone"), refused.getMessage());
+            assertTrue(refused.getMessage().contains("database.connectionTimeZone=UTC"), refused.getMessage());
+        }
     }
 
     @Test
     @DisplayName("A configured source zone is used as given")
     public void configuredSourceZoneIsUsed() {
-        assertEquals(ZoneId.of("UTC"), ClickHouseDataTypeMapper.resolveSourceTimeZone(config("UTC"), CHICAGO));
+        assertEquals(ZoneId.of("UTC"), ClickHouseDataTypeMapper.resolveSourceTimeZone(config("UTC")));
         assertEquals(ZoneId.of("Europe/London"),
-                ClickHouseDataTypeMapper.resolveSourceTimeZone(config("Europe/London"), CHICAGO));
+                ClickHouseDataTypeMapper.resolveSourceTimeZone(config("Europe/London")));
     }
 
     @Test
-    @DisplayName("An unparseable source zone fails loudly rather than being guessed")
+    @DisplayName("An unparseable source zone is refused when the config is built (spec 07.03 §3.1.6), not per batch")
     public void garbageSourceZoneThrows() {
-        assertThrows(DateTimeException.class,
-                () -> ClickHouseDataTypeMapper.resolveSourceTimeZone(config("Not/AZone"), CHICAGO));
+        assertThrows(ConfigException.class, () -> config("Not/AZone"));
+        assertThrows(ConfigException.class, () -> config("+5"));
     }
 
     @Test
@@ -64,5 +73,31 @@ public class ClickHouseDataTypeMapperTimeZoneTest {
         assertNull(ClickHouseDataTypeMapper.columnTimeZone("String"));
         assertNull(ClickHouseDataTypeMapper.columnTimeZone(null));
         assertNull(ClickHouseDataTypeMapper.columnTimeZone(""));
+    }
+
+    @Test
+    @DisplayName("Two zone ids with equal rules are one zone: US/Central renders exactly like America/Chicago (Spec 07.03 section 3.1.13)")
+    public void sameRulesDifferentIdIsSameZone() {
+        ZoneId us = ZoneId.of("US/Central");
+        assertTrue(DebeziumConverter.sameZone(us, CHICAGO), "equal rules, different ids");
+        assertTrue(DebeziumConverter.sameZone(CHICAGO, CHICAGO));
+        assertFalse(DebeziumConverter.sameZone(CHICAGO, ZoneId.of("Asia/Kolkata")));
+
+        // 2026-03-08 02:30 is a spring-forward gap time in Chicago. Debezium encoded the
+        // zone-less DATETIME digits as a UTC epoch; the same-zone decode resolves the gap with the offset
+        // before the transition (02:30 CST = 08:30 UTC) and binds that instant as epoch text.
+        long encodedDigits = LocalDateTime.of(2026, 3, 8, 2, 30).toInstant(ZoneOffset.UTC).toEpochMilli();
+        String canonical = DebeziumConverter.TimestampConverter.convert(encodedDigits,
+                ClickHouseDataType.DateTime64, CHICAGO, CHICAGO, null);
+        String alias = DebeziumConverter.TimestampConverter.convert(encodedDigits,
+                ClickHouseDataType.DateTime64, us, CHICAGO, null);
+        assertEquals("1772958600.000000", canonical);
+        assertEquals(canonical, alias, "the alias must not take the different-zones branch (shift by the source offset)");
+
+        long encodedMicros = encodedDigits * 1000L;
+        assertEquals(DebeziumConverter.MicroTimestampConverter.convert(encodedMicros, CHICAGO, CHICAGO,
+                        ClickHouseDataType.DateTime64, null),
+                DebeziumConverter.MicroTimestampConverter.convert(encodedMicros, us, CHICAGO,
+                        ClickHouseDataType.DateTime64, null));
     }
 }

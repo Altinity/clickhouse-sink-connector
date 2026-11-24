@@ -168,8 +168,8 @@ def test_consistent_snapshot_matches_while_the_table_is_written(ws, config, chur
     # (version fence on _version), never compared against a later state
     assert "has no _version column" not in log, log
     assert re.search(r"Excluded \d+ key\(s\) of \S+ slice \[.*\] changed after its snapshot began", log), log
-    # mysql:8.0 has no snapshot position variables: the position is the binary log head (an upper bound).
-    assert re.search(r"Snapshot of \S+ slice \[.*\] at \S+:\d+ \(upper_bound\)", log), log
+    # vanilla mysql:8.0 has no snapshot position variables (upper_bound); Percona Server exposes exact coordinates.
+    assert re.search(r"Snapshot of \S+ slice \[.*\] at \S+:\d+ \((?:exact|upper_bound)\)", log), log
     assert re.search(r"Connector on \S+ reached \S+ for \S+ slice", log), log
 
 

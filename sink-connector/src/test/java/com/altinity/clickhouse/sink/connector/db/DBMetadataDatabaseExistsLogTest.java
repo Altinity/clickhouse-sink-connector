@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -120,7 +121,7 @@ public class DBMetadataDatabaseExistsLogTest {
     private static DBMetadata metadata() {
         Map<String, String> props = new HashMap<>();
         props.put("connection.pool.disable", "true");
-        return new DBMetadata(new ClickHouseSinkConnectorConfig(props));
+        return new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
     }
 
     private static CapturingAppender capture() {

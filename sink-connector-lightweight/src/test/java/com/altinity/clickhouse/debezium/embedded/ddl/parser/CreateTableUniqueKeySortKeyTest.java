@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.Assert;
@@ -38,7 +39,7 @@ public class CreateTableUniqueKeySortKeyTest {
     @BeforeAll
     static public void init() {
         mySQLDDLParserService = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "employees");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
 

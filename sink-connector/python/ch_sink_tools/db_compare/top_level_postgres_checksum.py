@@ -766,7 +766,8 @@ def get_ch_checksum(ch_conn, ch_database: str, table_name: str,
                      col_names: List[str], tier: int,
                      pk_col: Optional[str] = None,
                      columns_meta: Optional[List[Dict]] = None,
-                     max_memory_usage: int = 80000000000) -> Optional[str]:
+                     max_memory_usage: int = 80000000000,
+                     pk_cols: Optional[List[str]] = None) -> Optional[str]:
     """
     Compute the Tier-1 (full column MD5) or Tier-2 (PK-list MD5) checksum
     from ClickHouse using FINAL + is_deleted=0.
@@ -823,10 +824,16 @@ def get_ch_checksum(ch_conn, ch_database: str, table_name: str,
         select_expr = concat_expr
 
     elif tier == 2:
-        if not pk_col:
+        # Every key column enters the hash, like the PostgreSQL side's
+        # pk_hash_input(): a composite key joined by char(1), a single key as is.
+        hash_columns = list(pk_cols) if pk_cols else ([pk_col] if pk_col else [])
+        if not hash_columns:
             logging.warning("No PK for CH Tier-2 checksum of %s.%s", ch_database, table_name)
             return None
-        select_expr = f'toString("{pk_col}")'
+        if len(hash_columns) == 1:
+            select_expr = f'toString("{hash_columns[0]}")'
+        else:
+            select_expr = "concat_ws(char(1), " + ", ".join(f'toString("{c}")' for c in hash_columns) + ")"
     else:
         return None
 
@@ -1230,6 +1237,7 @@ def compare_table(table_name: str,
                         tier=tier,
                         pk_col=pk_col,
                         columns_meta=included_meta,
+                        pk_cols=pk_columns,
                     )
 
                 if pg_checksum is not None and ch_checksum is not None:

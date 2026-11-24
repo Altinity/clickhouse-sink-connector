@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -20,7 +21,7 @@ public class BaseDbWriterTest {
         String jdbcProperties = "max_buffer_size=1000000,socket_timeout=10000";
         Map props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString(), jdbcProperties);
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
 
         Connection conn = BaseDbWriter.createConnection(
                 "localhost", BaseDbWriter.DATABASE_CLIENT_NAME,"default", "",BaseDbWriter.SYSTEM_DB, config);
@@ -42,7 +43,7 @@ public class BaseDbWriterTest {
         String jdbcProperties = "ssl=true,sslmode=none";
         Map props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString(), jdbcProperties);
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
 
         Connection conn = BaseDbWriter.createConnection(
                 "localhost", BaseDbWriter.DATABASE_CLIENT_NAME,"default", "",BaseDbWriter.SYSTEM_DB, config);

@@ -50,6 +50,76 @@ comparing default string renderings (see `DataTypeConverter` and
   - **No Float Conversion**: The value is never converted to `double` or `float` in memory, completely eliminating binary floating-point rounding errors.
   - Scale $S$ and precision $P$ are mapped directly into ClickHouse `Decimal(P, S)` / `Decimal32` / `Decimal64` / `Decimal128`.
 
+#### 3.2.1 An out-of-range decimal saturates to the bound of ITS OWN column, and that bound is a value the column accepts
+
+A `Decimal(p, s)` column stores a value as an integer count of $10^{-s}$ units,
+and that integer has at most $p$ digits. The column therefore accepts exactly the
+counts in $[-M, M]$ with $M = 10^{p} - 1$, and the scale does not enter: it decides
+which integer a source digit string maps to, not how many digits the column has.
+`DataTypeRange.decimalMax(p, s)` builds that number
+(`BigDecimal.TEN.pow(p).subtract(ONE).movePointLeft(s)`) and `decimalMin` negates
+it; `decimalMax` refuses `p` outside 1..76 and `s` outside 0..p.
+
+The bound is the column's own, never a fixed constant, because a bound the
+column cannot hold is not a bound.
+
+- **The defect this rule closes.** `DebeziumConverter.RangePolicy.boundDecimal`
+  saturated an out-of-range value to `BinaryStreamUtils.DECIMAL128_MAX`
+  (from `clickhouse-data`), which is $2^{127} - 1 = 170141183460469231731687303715884105727$
+  and needs **39** significant digits. ClickHouse accepts at most 38 for a
+  `Decimal128`, so on a `Decimal128` column the value stored in place of an
+  out-of-range source value was one the server refuses. The same constant is
+  *not* refused by a `Decimal(65, 30)`, where it is simply not the ceiling — so
+  one constant was wrong in both directions and right in neither.
+  Measured on 24.8.14.10545.altinitystable:
+
+  ```
+  accurateCastOrNull('170141183460469231731687303715884105727', 'Decimal(65,30)')
+    -> 170141183460469231731687303715884105727
+  accurateCastOrNull('170141183460469231731687303715884105727', 'Decimal(65,0)')
+    -> 170141183460469231731687303715884105727
+  toDecimal128OrNull('170141183460469231731687303715884105727', 0)  -> NULL
+  toDecimal128OrNull('99999999999999999999999999999999999999', 0)
+    -> 99999999999999999999999999999999999999
+  toDecimal64OrNull('999999999999.999999',     6)  -> 999999999999.999999
+  toDecimal64OrNull('1000000000000.000000',    6)  -> NULL
+  ```
+
+- **The rule.** `ClickHouseDataTypeMapper.decimalPrecisionScale(String)` reads
+  `{precision, scale}` from the declared column type and returns `null` for
+  anything it cannot trust (a non-decimal, `p = 0`, `p > 76`, `s > p`);
+  `PreparedStatementFieldMapper.columnBinding` threads it into
+  `RangePolicy.of(config, column, dateTime64Scale, decimalPrecision, decimalScale)`;
+  and `boundDecimal` bounds to `decimalMax(precision, scale)`, so the value it
+  stores is one the column accepts. When the declaration is unknown it falls back
+  to the widest `Decimal128` precision, 38, at scale 0 — the widest bound a
+  `Decimal128` column can hold, never the Int128 maximum.
+
+- **The widths ClickHouse spells.** `Decimal32(s)` IS `Decimal(9, s)`,
+  `Decimal64(s)` is `Decimal(18, s)`, `Decimal128(s)` is `Decimal(38, s)` and
+  `Decimal256(s)` is `Decimal(76, s)` (measured on the same server). A
+  fixed-width declaration carries the same bound with fewer digits written out.
+
+- **Both bounds are the same magnitude.** The low bound is the negation of the
+  high one, so a value saturated at the bottom and a value saturated at the top
+  never collide, and `bounding` is idempotent — an at-least-once redelivery does
+  not move a saturated value.
+
+- **Why it matters beyond the refusal.** A decimal column is commonly part of a
+  `ReplacingMergeTree` sorting key, which collapses two rows only when the whole
+  key is equal. A saturated value is a *stored* value, so one source value must
+  map to one stored value across releases; a release that stores a different
+  constant for the same source value writes a row at a second key, the older row
+  is never replaced, and `FINAL` returns both.
+
+- **Verification.** `DebeziumConverterRangePolicyTest.decimalSaturatesToTheBoundOfItsOwnColumn`
+  (the vectors above, the `±999999999999.999999` pair for `Decimal(18, 6)`, the
+  four `IllegalArgumentException` cases) and
+  `DebeziumConverterRangePolicyTest.decimalPrecisionScaleIsReadFromTheDeclaredType`
+  (every spelling, plus the `null` cases). Modelled over unbounded integers in
+  `specs/lean/DecimalBound.lean`, `specs/dafny/DecimalBound.dfy`,
+  `specs/tla/DecimalBound.tla` (+`.cfg`) and `specs/hypothesis/test_decimal_bound.py`.
+
 ---
 
 ## 4. Invariants Preserved

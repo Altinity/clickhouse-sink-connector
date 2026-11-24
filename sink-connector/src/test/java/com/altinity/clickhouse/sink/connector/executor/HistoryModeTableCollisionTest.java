@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.junit.jupiter.api.Disabled;
@@ -32,7 +33,7 @@ public class HistoryModeTableCollisionTest {
         props.put("clickhouse.server.database", "default");
         props.put("replication.history.enable", "true");
         props.put("replication.history.database.name", "binlog_history");
-        return new ClickHouseBatchWriter(new ClickHouseSinkConnectorConfig(props), new HashMap<>());
+        return new ClickHouseBatchWriter(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), new HashMap<>());
     }
 
     private static String target(ClickHouseBatchWriter writer, String database, String table) {

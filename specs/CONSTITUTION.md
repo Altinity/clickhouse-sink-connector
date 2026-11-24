@@ -49,7 +49,7 @@ To eliminate architectural regression, silent data corruption, and complexity dr
 
 ## 3. Core System Invariants
 
-The sink connector must maintain the following thirteen immutable invariants (I1–I13) across all operations:
+The sink connector must maintain the following fifteen immutable invariants (I1–I15) across all operations:
 
 ### Invariant I1: Log Sequence Monotonicity
 The relative ordering of transactional commits in the MySQL binary log must be strictly preserved during ingestion. Transactions committing at coordinate $(F_1, P_1)$ must be processed prior to or assigned an earlier version than transactions committing at $(F_2, P_2)$ where $(F_1, P_1) < (F_2, P_2)$.

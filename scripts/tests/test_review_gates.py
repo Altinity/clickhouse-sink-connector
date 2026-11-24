@@ -204,6 +204,32 @@ class DestructiveGateTest(GateTestCase):
         findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=2; result=pass")
         self.assertEqual(len(findings), 1)
 
+    # A commit published before 642b448058 refined the counter attested the count
+    # that counter produced. A ConfigMap line whose only destructive word sits in
+    # the embedded file's comment was a site then and is not one now, so the
+    # refinement must not invalidate the commit: the release PR of a published
+    # line must not be blocked by a rule that improved after the fact.
+    CONFIGMAP = ('  config.yml: "# connector settings\\nname: \\"company-1\\"\\n'
+                 '# the connector ignores drop and truncate events\\n"\n')
+
+    def test_configmap_comment_was_a_site_to_the_old_counter_only(self):
+        added = {"k8s/connector-configmap.yaml": [(1, self.CONFIGMAP.rstrip("\n"))]}
+        self.assertEqual(len(rg.destructive_sites(added)), 0)
+        self.assertEqual(len(rg.destructive_sites(added, legacy=True)), 1)
+
+    def test_commit_may_attest_the_count_its_own_counter_produced(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.write("k8s/connector-configmap.yaml", self.CONFIGMAP)
+        findings = self.run_gate("destructive", f"embed config\n\n{TRAILER_KEY}: sites=2; result=pass")
+        self.assertEqual(findings, [])
+
+    def test_a_count_neither_counter_produces_is_still_reported(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.write("k8s/connector-configmap.yaml", self.CONFIGMAP)
+        findings = self.run_gate("destructive", f"embed config\n\n{TRAILER_KEY}: sites=7; result=pass")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sites=7", findings[0].message)
+
     def test_e2e_test_data_is_exempt(self):
         self.repo.write("tool/python/tests_e2e/mysql/seed.sql", "DROP TABLE IF EXISTS t;\n")
         self.assertEqual(self.run_gate("destructive"), [])
@@ -228,6 +254,90 @@ class DestructiveGateTest(GateTestCase):
         findings = self.run_gate("destructive", "unwarned site after the checks")
         self.assertEqual(sorted({f.path for f in findings}), ["tool/new.py"])
         self.assertEqual(len(findings), 2)
+
+    def test_followup_commit_may_attest_published_ancestor_by_sha(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        published = self.repo.snapshot("published without trailer")
+        self.repo.write("tool/note.py", "x = 1\n")
+        msg = f"attest published commit\n\n{TRAILER_KEY}: commit={published[:10]}; sites=2; result=pass"
+        self.assertEqual(self.run_gate("destructive", msg), [])
+
+    def test_followup_attestation_still_requires_head_warning_comment(self):
+        self.repo.write("tool/a.py", 'cur.execute("DROP TABLE a_tmp")\n')
+        published = self.repo.snapshot("unwarned and unattested")
+        self.repo.write("tool/note.py", "x = 1\n")
+        msg = f"attest without comment\n\n{TRAILER_KEY}: commit={published[:10]}; sites=1; result=pass"
+        findings = self.run_gate("destructive", msg)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("without a 'DESTRUCTIVE:' comment", findings[0].message)
+
+    def test_followup_attestation_rejects_wrong_count_and_failed_result(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        published = self.repo.snapshot("published without trailer")
+        self.repo.write("tool/note.py", "x = 1\n")
+        wrong = f"wrong count\n\n{TRAILER_KEY}: commit={published[:10]}; sites=1; result=pass"
+        findings = self.run_gate("destructive", wrong)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("adds 2", findings[0].message)
+        self.repo.write("tool/note.py", "x = 2\n")
+        failed = f"failed result\n\n{TRAILER_KEY}: commit={published[:10]}; sites=2; result=fail"
+        findings = self.run_gate("destructive", failed)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("result=fail", findings[0].message)
+
+    def test_followup_attestation_cannot_cover_carrying_commit_own_sites(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        published = self.repo.snapshot("published without trailer")
+        self.repo.write("tool/b.py", self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        only_targeted = f"adds own site too\n\n{TRAILER_KEY}: commit={published[:10]}; sites=1; result=pass"
+        findings = self.run_gate("destructive", only_targeted)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].path, "tool/b.py")
+        self.assertIn("has no", findings[0].message)
+
+    def test_followup_attestation_requires_valid_strict_descendant(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        published = self.repo.snapshot("published without trailer")
+        self.repo.write("tool/note.py", "x = 1\n")
+        bad_short = f"short prefix\n\n{TRAILER_KEY}: commit={published[:5]}; sites=1; result=pass"
+        findings = self.run_gate("destructive", bad_short)
+        self.assertTrue(any("invalid commit=" in f.message for f in findings), findings)
+        self.assertTrue(any(f.path == "tool/a.py" for f in findings), findings)
+
+    def test_followup_attestation_rejects_self_and_non_ancestor_target(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        first = self.repo.snapshot("first")
+        # Construct a commit on a sibling branch that tries to attest `first`,
+        # then merge it: `sibling` is NOT a descendant of `first`.
+        self.repo._git("checkout", "-q", "-b", "sibling", self.base)
+        self.repo.write("tool/s.py", "x = 1\n")
+        self.repo.snapshot(f"sibling\n\n{TRAILER_KEY}: commit={first[:10]}; sites=1; result=pass")
+        self.repo._git("checkout", "-q", "main")
+        self.repo._git("merge", "-q", "--no-ff", "sibling", "-m", "merge sibling")
+        head = subprocess.run(["git", "-C", self.repo.root, "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        findings, _ = rg.run_gates(self.repo.root, self.base, head, ["destructive"])
+        self.assertTrue(any("strict descendant" in f.message for f in findings), findings)
+        self.assertTrue(any(f.path == "tool/a.py" for f in findings), findings)
+
+    def test_newer_followup_supersedes_earlier_followup_on_same_branch(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        published = self.repo.snapshot("published without trailer")
+        self.repo.write("tool/note.py", "x = 1\n")
+        self.repo.snapshot(f"first typo\n\n{TRAILER_KEY}: commit={published[:10]}; sites=1; result=pass")
+        self.repo.write("tool/note.py", "x = 2\n")
+        fix = f"corrected count\n\n{TRAILER_KEY}: commit={published[:10]}; sites=2; result=pass"
+        self.assertEqual(self.run_gate("destructive", fix), [])
+
+    def test_followup_attestation_survives_squash_merge(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        msg = (f"release (#99)\n\n* published change\n\n* follow-up attestation\n\n"
+               f"{TRAILER_KEY}: commit=40e1031857; sites=2; result=pass")
+        self.assertEqual(self.run_gate("destructive", msg), [])
 
 
 class MergeStopGateTest(GateTestCase):

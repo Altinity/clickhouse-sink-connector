@@ -14,12 +14,14 @@ spec:
   tasksMax: 1
   config:
     topics: "${TOPICS}"
-    buffer.count.records: "${BUFFER_COUNT}",
+    buffer.count.records: "${BUFFER_COUNT}"
     clickhouse.topic2table.map: "${TOPICS_TABLE_MAP}"
     clickhouse.server.url: "${CLICKHOUSE_HOST}"
     clickhouse.server.user: "${CLICKHOUSE_USER}"
     clickhouse.server.password: "${CLICKHOUSE_PASSWORD}"
     clickhouse.server.port: "${CLICKHOUSE_PORT}"
+    database.connectionTimeZone: "UTC"
+    clickhouse.datetime.timezone: "UTC"
     clickhouse.table.name: "${CLICKHOUSE_TABLE}"
     key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
     key.converter.apicurio.registry.url: "http://schemaregistry:8080/apis/registry/v2"

@@ -56,11 +56,16 @@ exactly the failure §3.2 forbids at the bind layer, reintroduced one layer down
 Rule (`BaseDbWriter.createConnection`, helper `customSettings`):
 1. The connector's default `custom_settings` are
    `input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1`.
-2. When `clickhouse.jdbc.settings` is configured, the user's settings are used
-   verbatim **and** `input_format_null_as_default=0` is appended when the
-   user's list does not mention `input_format_null_as_default` at all. A user
-   who sets the key explicitly (either value) is honoured — the choice is
-   then visible in the configuration, not silent.
+2. When `clickhouse.jdbc.settings` is configured, it is merged key-by-key over
+   `DEFAULT_CUSTOM_SETTINGS`: every user entry is kept in the user's order and
+   every default key the user did not mention is appended (entries are split
+   with `split("=", 2)` and trimmed; empty entries are skipped). A user entry
+   overrides the default for that one key only, so an unrelated setting such as
+   `async_insert=1` no longer drops `allow_experimental_object_type=1`,
+   `insert_allow_materialized_columns=1` or `input_format_null_as_default=0`.
+   A user who sets a default key explicitly (either value) is honoured — the
+   choice is then visible in the configuration, not silent. The INFO line is
+   logged only when `input_format_null_as_default` is appended.
 3. Consequence: a source NULL for a non-Nullable ClickHouse column fails the
    batch loudly (the exception names the column type) and the batch is
    retried; the remediation is on the ClickHouse side — the column must be
@@ -168,9 +173,12 @@ deprecated and ignored.
   contain `input_format_null_as_default=0` and keep the two pre-existing
   settings (pre-fix code emits only the latter two).
 - `JdbcCustomSettingsTest.userSettingsWithoutTheKeyGetItAppended()` — rule 2:
-  `async_insert=1` becomes `async_insert=1,input_format_null_as_default=0`.
+  `async_insert=1` is merged with the defaults: the user entry comes first and
+  every default key not mentioned is appended, including
+  `input_format_null_as_default=0`.
 - `JdbcCustomSettingsTest.explicitUserSettingIsHonoured()` — rule 2: a user
-  list that already sets the key (to `1` or `0`) is passed through unchanged.
+  list that already sets the key (to `1` or `0`) keeps the user's value for
+  that key; the other default keys are still merged in.
 - Probe (recorded above, `clickhouse local` 24.8.14): NULL into
   `Int32 DEFAULT 7` stores `7` under the server default and is rejected under
   `input_format_null_as_default=0`.
@@ -220,12 +228,12 @@ Recovery posture: a source NULL is always bound as NULL and the server is told n
 
 - **FM-07.07-2 Operator re-enables default substitution**
   - **Trigger**: `clickhouse.jdbc.settings` contains `input_format_null_as_default=1`.
-  - **Behaviour**: `BaseDbWriter.customSettings` passes a user list that mentions the key through unchanged and logs nothing (the INFO line is written only when the key is appended); ClickHouse then stores the column DEFAULT for every source NULL bound into a non-Nullable column (measured: `7` for `Int32 DEFAULT 7`).
+  - **Behaviour**: `BaseDbWriter.customSettings` keeps the user's value for a key the list mentions, merges in the remaining default keys, and logs nothing about the key (the INFO line is written only when the key is appended); ClickHouse then stores the column DEFAULT for every source NULL bound into a non-Nullable column (measured: `7` for `Int32 DEFAULT 7`).
   - **Detection**: none. DEFECT.
   - **Blast radius**: silent value divergence (default in place of NULL) on every such row; row counts intact.
   - **Recovery**: remove the key (or set it to 0), restart, then make the columns `Nullable` (FM-07.07-1) and P-RESYNC the affected tables.
   - **RTO**: restart ≈ 1 min + resync; unmeasured.
-  - **Test**: `JdbcCustomSettingsTest.explicitUserSettingIsHonoured()` pins the pass-through; GAP: a test that an explicit `input_format_null_as_default=1` is reported at WARN at start.
+  - **Test**: `JdbcCustomSettingsTest.explicitUserSettingIsHonoured()` pins that the user's value wins; GAP: a test that an explicit `input_format_null_as_default=1` is reported at WARN at start.
   - **DEFECT**: a setting that reintroduces the substitution §3.2 forbids is accepted without a warning.
 
 - **FM-07.07-3 Field with no type binding**

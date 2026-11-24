@@ -46,16 +46,16 @@ public class JdbcCustomSettingsTest {
     @Test
     @DisplayName("User settings that do not mention the key get input_format_null_as_default=0 appended")
     public void userSettingsWithoutTheKeyGetItAppended() {
-        assertEquals("async_insert=1,input_format_null_as_default=0",
+        assertEquals("async_insert=1,input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1",
                 BaseDbWriter.customSettings("async_insert=1"));
     }
 
     @Test
-    @DisplayName("A user list that sets the key explicitly is passed through unchanged")
+    @DisplayName("A user list that sets the key explicitly is honoured; the other defaults are still merged in")
     public void explicitUserSettingIsHonoured() {
-        assertEquals("input_format_null_as_default=1,async_insert=1",
+        assertEquals("input_format_null_as_default=1,async_insert=1,allow_experimental_object_type=1,insert_allow_materialized_columns=1",
                 BaseDbWriter.customSettings("input_format_null_as_default=1,async_insert=1"));
-        assertEquals("async_insert=1, input_format_null_as_default=0",
+        assertEquals("async_insert=1,input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1",
                 BaseDbWriter.customSettings("async_insert=1, input_format_null_as_default=0"));
     }
 }
