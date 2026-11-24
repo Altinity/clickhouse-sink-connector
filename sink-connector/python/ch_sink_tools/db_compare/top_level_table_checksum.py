@@ -1635,14 +1635,33 @@ def parse_table_include_list(text):
     return [entry.strip() for entry in str(text).split(',') if entry.strip()]
 
 
+_LITERAL_DB_PREFIX_RE = re.compile(r"^\^?([A-Za-z0-9_-]+)(?:\\\.|\.(?![*+?{]))")
+
+
 def include_list_for_database(include_list, database):
-    """The entries of ``include_list`` that name ``database`` (``<database>.<table pattern>``),
-    ``None`` when there is no include list at all. A list with no entry for
-    ``database`` is an empty list: it selects no table of it, it does not
-    switch the filter off."""
+    """Return the entries of ``include_list`` that can match ``database``,
+    or ``None`` when there is no include list at all.
+
+    Entries targeting a specific literal database (``<db>.<pattern>`` or
+    ``<db>\\.<pattern>``) are kept only for that database. Cross-database
+    regex patterns (such as ``.*``, ``^db_.*\\..*``, or alternations
+    ``a\\.t1|b\\.t2``) are retained so ``match_table_include_list`` evaluates
+    them against ``<database>.<table>``. A list with no applicable entry for
+    ``database`` is returned as an empty list: it selects no table of it, it
+    does not switch the filter off."""
     if include_list is None:
         return None
-    return [entry for entry in include_list if entry.startswith(f"{database}.")]
+    applicable = []
+    for entry in include_list:
+        pattern = str(entry).strip()
+        if not pattern:
+            continue
+        if "|" not in pattern:
+            m = _LITERAL_DB_PREFIX_RE.match(pattern)
+            if m and m.group(1) != database:
+                continue
+        applicable.append(entry)
+    return applicable
 
 
 def parse_ignored_columns(entries):

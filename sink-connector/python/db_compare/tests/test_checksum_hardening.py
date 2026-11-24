@@ -285,6 +285,33 @@ class TestTableIncludeList(unittest.TestCase):
         self.assertEqual(other, [])
         self.assertFalse(tl.match_table_include_list("erp", "orders", other))
 
+    def test_cross_database_and_regex_include_patterns_are_preserved(self):
+        wildcard = tl.parse_table_include_list(".*")
+        self.assertEqual(tl.include_list_for_database(wildcard, "shop"), [".*"])
+        self.assertTrue(tl.match_table_include_list("shop", "orders", tl.include_list_for_database(wildcard, "shop")))
+
+        escaped = tl.parse_table_include_list(r"shop\.orders")
+        self.assertEqual(tl.include_list_for_database(escaped, "shop"), [r"shop\.orders"])
+        self.assertEqual(tl.include_list_for_database(escaped, "erp"), [])
+        self.assertTrue(tl.match_table_include_list("shop", "orders", tl.include_list_for_database(escaped, "shop")))
+
+        prefix_regex = tl.parse_table_include_list(r"^shop_.*\..*")
+        self.assertEqual(tl.include_list_for_database(prefix_regex, "shop_eu"), [r"^shop_.*\..*"])
+        self.assertTrue(tl.match_table_include_list("shop_eu", "orders", tl.include_list_for_database(prefix_regex, "shop_eu")))
+
+        prefix_star = tl.parse_table_include_list("shop.*")
+        self.assertEqual(tl.include_list_for_database(prefix_star, "shop_eu"), ["shop.*"])
+        self.assertTrue(tl.match_table_include_list("shop_eu", "orders", tl.include_list_for_database(prefix_star, "shop_eu")))
+
+        alt = tl.parse_table_include_list(r"shop\.orders|erp\.items")
+        self.assertEqual(tl.include_list_for_database(alt, "erp"), [r"shop\.orders|erp\.items"])
+        self.assertTrue(tl.match_table_include_list("erp", "items", tl.include_list_for_database(alt, "erp")))
+        self.assertFalse(tl.match_table_include_list("erp", "orders", tl.include_list_for_database(alt, "erp")))
+
+        double_dot = tl.parse_table_include_list("shop..*")
+        self.assertEqual(tl.include_list_for_database(double_dot, "shop"), ["shop..*"])
+        self.assertEqual(tl.include_list_for_database(double_dot, "erp"), [])
+
 
 class TestIgnoredColumns(unittest.TestCase):
 

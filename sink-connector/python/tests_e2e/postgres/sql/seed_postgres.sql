@@ -118,8 +118,8 @@ INSERT INTO pye2e_b.dup_t VALUES (1, 'pye2e_b'), (3, 'pye2e_b');
 CREATE TABLE pye2e_b.b_only (id integer PRIMARY KEY);
 INSERT INTO pye2e_b.b_only VALUES (1);
 
--- time with time zone: PostgreSQL has no to_char(timetz, text), so the
--- ch-pg-checksum query on this table fails (a failing table, D-13.07-23).
+-- time with time zone: exercises timetz checksum handling and serves as the
+-- target table for the query-failure exit-code test (D-13.07-23).
 CREATE TABLE pye2e.x_timetz (id integer PRIMARY KEY, t time with time zone NOT NULL);
 INSERT INTO pye2e.x_timetz VALUES (1, '12:34:56.789+02');
 

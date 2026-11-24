@@ -372,9 +372,72 @@ public class DDLSchemaChangeWaiter {
         return type.isEmpty() ? null : type;
     }
 
-    /** Lower-cased with every whitespace removed: ClickHouse re-renders spacing inside a type. */
-    private static String normalizeType(String type) {
-        return type.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+    private static final Pattern ALIAS_DATETIME32 = Pattern.compile("\\bdatetime32\\b");
+    private static final Pattern ALIAS_DATETIME64_ZERO_TZ = Pattern.compile("\\bdatetime64\\((\\d+),0\\)");
+    private static final Pattern ALIAS_BOOLEAN = Pattern.compile("\\bboolean\\b");
+    private static final Pattern ALIAS_DECIMAL32 = Pattern.compile("\\bdecimal32\\((\\d+)\\)");
+    private static final Pattern ALIAS_DECIMAL64 = Pattern.compile("\\bdecimal64\\((\\d+)\\)");
+    private static final Pattern ALIAS_DECIMAL128 = Pattern.compile("\\bdecimal128\\((\\d+)\\)");
+    private static final Pattern ALIAS_DECIMAL256 = Pattern.compile("\\bdecimal256\\((\\d+)\\)");
+    private static final Pattern ALIAS_DECIMAL_NO_SCALE = Pattern.compile("\\bdecimal\\((\\d+)\\)");
+
+    private static String normalizeUnquotedTypeSegment(String segment) {
+        String s = segment.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+        s = ALIAS_DATETIME32.matcher(s).replaceAll("datetime");
+        s = ALIAS_DATETIME64_ZERO_TZ.matcher(s).replaceAll("datetime64($1)");
+        s = ALIAS_BOOLEAN.matcher(s).replaceAll("bool");
+        s = ALIAS_DECIMAL32.matcher(s).replaceAll("decimal(9,$1)");
+        s = ALIAS_DECIMAL64.matcher(s).replaceAll("decimal(18,$1)");
+        s = ALIAS_DECIMAL128.matcher(s).replaceAll("decimal(38,$1)");
+        s = ALIAS_DECIMAL256.matcher(s).replaceAll("decimal(76,$1)");
+        s = ALIAS_DECIMAL_NO_SCALE.matcher(s).replaceAll("decimal($1,0)");
+        return s;
+    }
+
+    /**
+     * Normalizes a ClickHouse type string for equality against {@code system.columns}:
+     * lower-cases, strips whitespace outside quoted literals, and folds ClickHouse type
+     * aliases that DDL generators emit but {@code system.columns} renders canonically
+     * ({@code DateTime32} -&gt; {@code DateTime}, {@code DateTime64(p, 0)} -&gt;
+     * {@code DateTime64(p)}, {@code Boolean} -&gt; {@code Bool}, {@code Decimal(p)}
+     * -&gt; {@code Decimal(p,0)}, {@code Decimal{32,64,128,256}(s)} -&gt;
+     * {@code Decimal({9,18,38,76},s)}).
+     */
+    static String normalizeType(String type) {
+        StringBuilder out = new StringBuilder(type.length());
+        int n = type.length();
+        int segStart = 0;
+        for (int i = 0; i < n; i++) {
+            if (type.charAt(i) == '\'') {
+                if (i > segStart) {
+                    out.append(normalizeUnquotedTypeSegment(type.substring(segStart, i)));
+                }
+                int qStart = i;
+                i++;
+                while (i < n) {
+                    char c = type.charAt(i);
+                    if (c == '\\' && i + 1 < n) {
+                        i += 2;
+                        continue;
+                    }
+                    if (c == '\'') {
+                        if (i + 1 < n && type.charAt(i + 1) == '\'') {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i++;
+                }
+                int qEnd = Math.min(i + 1, n);
+                out.append(type.substring(qStart, qEnd).toLowerCase(Locale.ROOT));
+                segStart = qEnd;
+            }
+        }
+        if (segStart < n) {
+            out.append(normalizeUnquotedTypeSegment(type.substring(segStart)));
+        }
+        return out.toString();
     }
 
     private static boolean satisfied(Map<String, ColumnExpectation> expected, Map<String, String> current) {

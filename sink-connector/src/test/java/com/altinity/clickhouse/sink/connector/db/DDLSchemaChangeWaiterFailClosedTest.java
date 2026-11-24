@@ -20,6 +20,7 @@ import java.util.function.Function;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -391,5 +392,65 @@ class DDLSchemaChangeWaiterFailClosedTest {
         assertEquals("o''brien", DDLSchemaChangeWaiter.escapeSqlLiteral("o'brien"));
         assertEquals("a\\\\b", DDLSchemaChangeWaiter.escapeSqlLiteral("a\\b"));
         assertEquals("x''; DROP", DDLSchemaChangeWaiter.escapeSqlLiteral("x'; DROP"));
+    }
+
+    // ------------------------------------------------------------------
+    // (e) ClickHouse canonical type alias normalization on MODIFY COLUMN
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("normalizeType folds ClickHouse aliases to system.columns canonical forms")
+    void normalizeTypeFoldsClickHouseAliases() {
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("DateTime"),
+                DDLSchemaChangeWaiter.normalizeType("DateTime32"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("DateTime('America/New_York')"),
+                DDLSchemaChangeWaiter.normalizeType("DateTime32('America/New_York')"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Nullable(DateTime('UTC'))"),
+                DDLSchemaChangeWaiter.normalizeType("Nullable(DateTime32('UTC'))"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("DateTime64(6)"),
+                DDLSchemaChangeWaiter.normalizeType("DateTime64(6, 0)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Nullable(DateTime64(3))"),
+                DDLSchemaChangeWaiter.normalizeType("Nullable(DateTime64(3, 0))"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Bool"),
+                DDLSchemaChangeWaiter.normalizeType("Boolean"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Nullable(Bool)"),
+                DDLSchemaChangeWaiter.normalizeType("Nullable(Boolean)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Decimal(10, 0)"),
+                DDLSchemaChangeWaiter.normalizeType("Decimal(10)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Decimal(9, 2)"),
+                DDLSchemaChangeWaiter.normalizeType("Decimal32(2)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Decimal(18, 4)"),
+                DDLSchemaChangeWaiter.normalizeType("Decimal64(4)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Decimal(38, 6)"),
+                DDLSchemaChangeWaiter.normalizeType("Decimal128(6)"));
+        assertEquals(DDLSchemaChangeWaiter.normalizeType("Decimal(76, 8)"),
+                DDLSchemaChangeWaiter.normalizeType("Decimal256(8)"));
+        // Quoted literals inside Enum types are not rewritten.
+        assertEquals("enum8('boolean'=1,'datetime32'=2)",
+                DDLSchemaChangeWaiter.normalizeType("Enum8('boolean' = 1, 'datetime32' = 2)"));
+        // Genuine mismatches remain distinct.
+        assertNotEquals(DDLSchemaChangeWaiter.normalizeType("DateTime64(3)"),
+                DDLSchemaChangeWaiter.normalizeType("DateTime64(6)"));
+        assertNotEquals(DDLSchemaChangeWaiter.normalizeType("DateTime('UTC')"),
+                DDLSchemaChangeWaiter.normalizeType("DateTime('America/New_York')"));
+        assertNotEquals(DDLSchemaChangeWaiter.normalizeType("DateTime('UTC')"),
+                DDLSchemaChangeWaiter.normalizeType("Nullable(DateTime('UTC'))"));
+    }
+
+    @Test
+    @DisplayName("MODIFY COLUMN with DateTime32/DateTime64(p,0) succeeds against canonical system.columns")
+    void modifyColumnSucceedsWhenSystemColumnsCanonicalizesAlias() {
+        DDLSchemaChangeWaiter waiter = new DDLSchemaChangeWaiter(1_000, 10);
+        FakeClickHouse ch = new FakeClickHouse(poll -> columns(
+                "ts", "Nullable(DateTime('America/New_York'))",
+                "ts64", "DateTime64(6)",
+                "amt", "Decimal(18, 4)"));
+
+        waiter.awaitSchemaVisibility(ch.connection(),
+                "ALTER TABLE `db`.`t` "
+                        + "MODIFY COLUMN `ts` Nullable(DateTime32('America/New_York')), "
+                        + "MODIFY COLUMN `ts64` DateTime64(6, 0), "
+                        + "MODIFY COLUMN `amt` Decimal64(4)");
+        assertEquals(1, ch.queries.size());
     }
 }

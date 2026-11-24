@@ -98,7 +98,7 @@ def test_snapshot_mode_reads_postgres_in_one_repeatable_read_transaction(dumped,
 def test_pg_checksum_exits_1_when_a_table_query_fails(seeded):
     """D-13.07-23: ch-pg-checksum must not exit 0 when a table's query fails."""
     rc, output = run_tool("ch_sink_tools.db_compare.postgres_table_checksum",
-                          pg_tool_args() + ["--tables_regex", "x_timetz", "--no_wc"])
+                          pg_tool_args() + ["--tables_regex", "x_timetz", "--where", "1/0 = 1", "--no_wc"])
     assert "Error checksumming" in output
     assert rc == 1
     assert "1 table(s) failed: ['x_timetz']" in output
