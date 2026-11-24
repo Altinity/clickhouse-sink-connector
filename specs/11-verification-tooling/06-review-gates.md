@@ -88,10 +88,19 @@ produces. For a squash-merge commit (subject ending in `(#N)`) the sum may
 exceed the commit's net site count but never fall short of it: its trailers
 are the PR's per-commit attestations, each checked exactly in that PR, and a
 PR that reworked a destructive line attested it more than once. Every other
-commit must attest exactly. A commit that adds no site needs no trailer. A missing trailer, a
-count mismatch or a non-pass result is a finding that names the commit. A
-single cumulative trailer for the whole range cannot work for a release
-branch, whose range holds many already-attested commits.
+commit must attest exactly. A commit that adds no site needs no trailer. When a
+commit adding warned sites has already been published to a shared branch without
+a valid trailer, a strict descendant commit may attest it without rewriting
+history by carrying `Destructive-Op-Check: commit=<sha>; sites=<N>; result=pass`,
+where `<sha>` is an unambiguous 7-40 hex SHA prefix of that ancestor commit and
+`N` matches its exact site count. A targeted `commit=<sha>` trailer never attests
+the commit that carries it (outside a squash merge that collapsed both commits),
+a newer descendant follow-up supersedes an earlier follow-up for the same target,
+and the `DESTRUCTIVE:` warning comment in HEAD remains mandatory. A missing
+trailer, a count mismatch, a non-pass result, an invalid/ambiguous SHA prefix or
+a non-descendant target is a finding that names the commit. A single cumulative
+trailer for the whole range cannot work for a release branch, whose range holds
+many already-attested commits.
 
 ### 3.3 merge-stop
 An added line, or a run of up to four consecutive added lines, is a finding
@@ -180,7 +189,15 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_squash_message_with_several_trailers_is_summed`,
   `test_squash_merge_may_attest_more_than_its_net_sites_never_fewer`,
   `test_squash_merge_attesting_too_few_sites_is_reported`,
-  `test_non_squash_commit_must_attest_exactly`, `test_e2e_test_data_is_exempt`.
+  `test_non_squash_commit_must_attest_exactly`, `test_e2e_test_data_is_exempt`,
+  `test_followup_commit_may_attest_published_ancestor_by_sha`,
+  `test_followup_attestation_still_requires_head_warning_comment`,
+  `test_followup_attestation_rejects_wrong_count_and_failed_result`,
+  `test_followup_attestation_cannot_cover_carrying_commit_own_sites`,
+  `test_followup_attestation_requires_valid_strict_descendant`,
+  `test_followup_attestation_rejects_self_and_non_ancestor_target`,
+  `test_newer_followup_supersedes_earlier_followup_on_same_branch`,
+  `test_followup_attestation_survives_squash_merge`.
 - §3.1: `test_changes_older_than_the_gate_are_not_checked`,
   `test_changes_from_the_gate_commit_onward_are_checked`.
 - §3.3: `test_literal_stop_is_reported`,

@@ -81,7 +81,18 @@ fall short. A non-squash commit may also attest the count the counter of its
 own time produced: refining what counts as a site never invalidates a commit
 that was already published under the earlier rule. Commit 642b448058 stopped
 counting a Kubernetes ConfigMap's embedded configuration file as one site, so a
-commit that attested that older count keeps passing. The trailer is an
+commit that attested that older count keeps passing. When a commit adding
+warned sites has already been published to a shared branch without a valid
+trailer, a strict descendant commit may attest it without rewriting history:
+
+```
+Destructive-Op-Check: commit=<sha>; sites=<N>; result=pass
+```
+
+`<sha>` must be an unambiguous hex prefix of at least 7 characters matching
+that ancestor commit, `sites=<N>` must match its exact count, and the trailer
+never attests the commit carrying it. The `DESTRUCTIVE:` warning comment in
+HEAD is still mandatory. The trailer is an
 attestation that each site was reviewed, that its semantics were checked
 against the code that actually executes it (not a parameter description), and
 that a dry-run path exists where a tool can run against live data. The

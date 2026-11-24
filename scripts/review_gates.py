@@ -338,9 +338,92 @@ def destructive_sites(added: Dict[str, List[Tuple[int, str]]],
             for lineno, text in lines if is_destructive_line(text, legacy)]
 
 
+COMMIT_REF_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def _evaluate_trailers(trailers: Sequence[Dict[str, str]], short: str,
+                       path: str, line: int, site_count: int,
+                       allowed: set, expected: str,
+                       squashed: bool) -> List[Finding]:
+    findings: List[Finding] = []
+    bad_results = [t.get("result", "") for t in trailers if t.get("result", "").lower() not in ("pass", "passed")]
+    if bad_results:
+        findings.append(Finding(path, line, "destructive",
+                                f"commit {short}: Destructive-Op-Check trailer has result="
+                                f"{bad_results[0] or '<missing>'}; every site must be reviewed and warned "
+                                "(result=pass)"))
+    values = [t.get("sites", "") for t in trailers]
+    total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
+    if total is None or (total < site_count if squashed else total not in allowed):
+        findings.append(Finding(path, line, "destructive",
+                                f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
+                                f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "
+                                f"{site_count} destructive site(s); expected '{expected}'"))
+    return findings
+
+
+def _collect_followup_trailers(
+    commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]],
+    is_descendant,
+) -> Tuple[Dict[str, List[Dict[str, str]]], List[Finding]]:
+    """Resolve ``Destructive-Op-Check: commit=<sha>; sites=<N>; result=pass``
+    trailers in descendant commits back to their target ancestor commit.
+
+    A commit already published to a shared branch cannot be amended without
+    rewriting history; a strict descendant commit may attest it by an
+    unambiguous >= 7-hex SHA prefix. A targeted trailer never attests the
+    commit that carries it."""
+    all_shas = [sha for sha, _, _ in commits]
+    by_target: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
+    findings: List[Finding] = []
+    for att_sha, message, _ in commits:
+        for trailer in parse_trailers(message):
+            if "commit" not in trailer:
+                continue
+            ref = trailer["commit"].lower()
+            if not COMMIT_REF_RE.match(ref):
+                findings.append(Finding(
+                    "(commit)", 0, "destructive",
+                    f"commit {att_sha[:10]}: Destructive-Op-Check has invalid commit="
+                    f"{trailer['commit']!r}; expected a 7-40 hex commit SHA prefix",
+                ))
+                continue
+            matches = [sha for sha in all_shas if sha.lower().startswith(ref)]
+            if not matches:
+                continue
+            if len(matches) > 1:
+                findings.append(Finding(
+                    "(commit)", 0, "destructive",
+                    f"commit {att_sha[:10]}: Destructive-Op-Check commit={ref} is ambiguous "
+                    f"across {len(matches)} commits; use a longer SHA prefix",
+                ))
+                continue
+            target_sha = matches[0]
+            if not is_descendant(target_sha, att_sha):
+                findings.append(Finding(
+                    "(commit)", 0, "destructive",
+                    f"commit {att_sha[:10]}: Destructive-Op-Check commit={ref} must be in a "
+                    f"strict descendant commit of {target_sha[:10]}",
+                ))
+                continue
+            by_target.setdefault(target_sha, {}).setdefault(att_sha, []).append(trailer)
+    resolved: Dict[str, List[Dict[str, str]]] = {}
+    for target_sha, per_attester in by_target.items():
+        attesters = list(per_attester)
+        # If a newer descendant follow-up supersedes an earlier follow-up for
+        # the same target commit, keep only the maximal (un-superseded) ones.
+        latest = [a for a in attesters
+                  if not any(other != a and is_descendant(a, other) for other in attesters)]
+        resolved[target_sha] = [t for a in latest for t in per_attester[a]]
+    return resolved, findings
+
+
 def check_commit_attestation(sha: str, message: str,
-                             added: Dict[str, List[Tuple[int, str]]]) -> List[Finding]:
-    """One commit's own sites must be attested by that commit's own message."""
+                             added: Dict[str, List[Tuple[int, str]]],
+                             followup_trailers: Sequence[Dict[str, str]] = ()) -> List[Finding]:
+    """One commit's own sites must be attested by that commit's own message
+    (or, for an already-published commit on a shared branch, by a targeted
+    follow-up trailer in a strict descendant commit)."""
     sites = destructive_sites(added)
     if not sites:
         return []
@@ -356,35 +439,36 @@ def check_commit_attestation(sha: str, message: str,
     path, line = sites[0]
     short = sha[:10]
     expected = " or ".join(f"Destructive-Op-Check: sites={n}; result=pass" for n in sorted(allowed))
-    trailers = parse_trailers(message)
-    if not trailers:
-        return [Finding(path, line, "destructive",
-                        f"commit {short} adds {len(sites)} destructive site(s) but its message has no "
-                        f"'{expected}' trailer")]
-    findings: List[Finding] = []
-    bad_results = [t.get("result", "") for t in trailers if t.get("result", "").lower() not in ("pass", "passed")]
-    if bad_results:
-        findings.append(Finding(path, line, "destructive",
-                                f"commit {short}: Destructive-Op-Check trailer has result="
-                                f"{bad_results[0] or '<missing>'}; every site must be reviewed and warned "
-                                "(result=pass)"))
-    values = [t.get("sites", "") for t in trailers]
     # A squash merge ("subject (#N)") concatenates the trailers of the PR's
     # commits, each of which was checked exactly in that PR. Their sum can
     # exceed the squashed diff's net count when the PR reworked a destructive
     # line, never fall short of it.
     squashed = bool(SQUASH_SUBJECT_RE.search(message.strip().splitlines()[0] if message.strip() else ""))
-    total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
-    if total is None or (total < len(sites) if squashed else total not in allowed):
-        findings.append(Finding(path, line, "destructive",
-                                f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
-                                f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "
-                                f"{len(sites)} destructive site(s); expected '{expected}'"))
-    return findings
+    all_trailers = parse_trailers(message)
+    # On a non-squash commit, trailers targeting another commit (commit=<sha>)
+    # never attest the carrying commit's own sites. On a squash merge, all
+    # concatenated trailers from the squashed PR belong to the squashed diff.
+    own_trailers = all_trailers if squashed else [t for t in all_trailers if "commit" not in t]
+    if own_trailers:
+        own_findings = _evaluate_trailers(own_trailers, short, path, line, len(sites),
+                                          allowed, expected, squashed)
+        if not own_findings:
+            return []
+        if followup_trailers:
+            return _evaluate_trailers(followup_trailers, short, path, line, len(sites),
+                                      allowed, expected, False)
+        return own_findings
+    if followup_trailers:
+        return _evaluate_trailers(followup_trailers, short, path, line, len(sites),
+                                  allowed, expected, False)
+    return [Finding(path, line, "destructive",
+                    f"commit {short} adds {len(sites)} destructive site(s) but its message has no "
+                    f"'{expected}' trailer")]
 
 
 def check_destructive(added: Dict[str, List[Tuple[int, str]]], head_text,
-                      commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]]) -> List[Finding]:
+                      commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]],
+                      is_descendant=None) -> List[Finding]:
     """Warning comments are checked on the head version of every line the
     change adds; attestation is checked per commit (``commits`` holds
     ``(sha, message, lines that commit adds)`` for each non-merge commit)."""
@@ -407,8 +491,13 @@ def check_destructive(added: Dict[str, List[Tuple[int, str]]], head_text,
                     f"(>= {MIN_WARNING_TEXT} chars: what is destroyed and how the "
                     f"blast radius is bounded) within {WARNING_WINDOW} lines",
                 ))
+    if is_descendant is None:
+        idx = {sha: i for i, (sha, _, _) in enumerate(commits)}
+        is_descendant = lambda anc, desc: anc != desc and idx[desc] < idx[anc]
+    followups, followup_findings = _collect_followup_trailers(commits, is_descendant)
+    findings += followup_findings
     for sha, message, commit_added in commits:
-        findings += check_commit_attestation(sha, message, commit_added)
+        findings += check_commit_attestation(sha, message, commit_added, followups.get(sha, ()))
     return findings
 
 
@@ -721,7 +810,10 @@ def run_gates(repo: str, base: str, head: str, gates: Iterable[str]) -> Tuple[Li
     findings: List[Finding] = []
     notices: List[str] = []
     if "destructive" in gates:
-        findings += check_destructive(added, head_text, range_commits(repo, mb, head))
+        def _is_descendant(ancestor: str, descendant: str) -> bool:
+            return ancestor != descendant and is_ancestor(repo, ancestor, descendant)
+        findings += check_destructive(added, head_text, range_commits(repo, mb, head),
+                                      is_descendant=_is_descendant)
     if "merge-stop" in gates:
         findings += check_merge_stop(added)
     if "license" in gates:
